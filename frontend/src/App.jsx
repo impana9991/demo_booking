@@ -525,12 +525,12 @@ export default function App() {
 
       {showLiveForm && mode !== "live" && (
         <form className="live-secret-bar" onSubmit={switchToLive}>
-          <label htmlFor="partner-secret">Partner secret</label>
+          <label htmlFor="partner-secret">Event invite secret</label>
           <input
             id="partner-secret"
             type="password"
             autoComplete="off"
-            placeholder="Event invite secret"
+            placeholder="Event access_code (not spk_/sps_)"
             value={partnerSecret}
             onChange={(e) => setPartnerSecret(e.target.value)}
             disabled={modeBusy}

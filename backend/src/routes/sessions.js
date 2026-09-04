@@ -10,28 +10,44 @@ router.post("/", async (req, res, next) => {
     const { event_id, access_code, owner_ref } = req.body || {};
     if (!event_id) return res.status(400).json({ error: "event_id is required" });
 
+    // Event invite secret (access_code) — NOT the HMAC partner API secret (sps_…).
+    // Prefer .env for Live so a mistyped Live-toggle value does not break booking.
     const code =
       access_code ||
-      getPartnerSecret() ||
       process.env.STADEPASS_EVENT_ACCESS_CODE ||
+      getPartnerSecret() ||
       (isDemoMode() ? "demo-access" : undefined);
 
     if (!code) {
       return res.status(400).json({
-        error: "Partner secret is required for Live. Switch to Live and enter it first.",
+        error:
+          "Event invite secret missing. Set STADEPASS_EVENT_ACCESS_CODE in backend/.env or enter it when switching to Live.",
       });
     }
 
-    const data = await stadepassRequest({
-      method: "POST",
-      path: "/api/v1/public/booking-sessions",
-      body: {
-        event_id: String(event_id),
-        access_code: String(code),
-        owner_ref: owner_ref || `demo-booking-user-${randomUUID().slice(0, 8)}`,
-      },
-    });
-    res.status(201).json({ demo: isDemoMode(), ...data });
+    try {
+      const data = await stadepassRequest({
+        method: "POST",
+        path: "/api/v1/public/booking-sessions",
+        body: {
+          event_id: String(event_id),
+          access_code: String(code),
+          owner_ref: owner_ref || `demo-booking-user-${randomUUID().slice(0, 8)}`,
+        },
+      });
+      res.status(201).json({ demo: isDemoMode(), ...data });
+    } catch (e) {
+      const msg = String(e.message || "");
+      if (e.status === 401 || /ACCESS_DENIED|event secret|access_code/i.test(msg)) {
+        const err = new Error(
+          "Invalid or missing event invite secret (access_code). Use the secret from the event invite — not the API key (spk_) or HMAC secret (sps_). Check STADEPASS_EVENT_ACCESS_CODE in backend/.env."
+        );
+        err.status = 401;
+        err.payload = e.payload;
+        throw err;
+      }
+      throw e;
+    }
   } catch (e) {
     next(e);
   }

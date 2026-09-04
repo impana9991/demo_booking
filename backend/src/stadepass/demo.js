@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 
-/** In-memory demo inventory mirroring partner invite + event-secret rules. */
+/** In-memory demo inventory — map shape matches Core (zones/sections/seats geometry). */
 const DEMO_ACCESS = process.env.STADEPASS_EVENT_ACCESS_CODE || "demo-access";
 
 const demoState = {
@@ -16,15 +16,17 @@ const EVENTS = [
     category: "Sport",
     starts_at: "2026-09-28T16:00:00",
     venue: { name: "Stade du 28 Septembre", city: "Conakry", country: "Guinée" },
-    min_price: 50000,
+    min_price: 35000,
     currency: "GNF",
     home_team: "Horoya AC",
     away_team: "Hafia FC",
-    description: "Derby de Conakry — invited event for Demo Booking.",
+    description: "Derby de Conakry — Demo Booking sample event.",
     invited: true,
     pricing_zones: [
-      { name: "Tribune Ouest", price: 50000, currency: "GNF" },
-      { name: "Tribune Est", price: 35000, currency: "GNF" },
+      { name: "Tribune Ouest", code: "TRIB-OUEST", price: 50000, currency: "GNF" },
+      { name: "Tribune Est", code: "TRIB-EST", price: 35000, currency: "GNF" },
+      { name: "Tribune Nord", code: "TRIB-NORD", price: 45000, currency: "GNF" },
+      { name: "Tribune Sud", code: "TRIB-SUD", price: 40000, currency: "GNF" },
     ],
   },
   {
@@ -37,61 +39,137 @@ const EVENTS = [
     currency: "GNF",
     home_team: null,
     away_team: null,
-    description: "Soirée live — Demo Booking invite + event secret required.",
+    description: "Soirée live — Demo Booking sample concert.",
     invited: true,
-    pricing_zones: [{ name: "Tribune Ouest", price: 75000, currency: "GNF" }],
+    pricing_zones: [{ name: "Tribune Ouest", code: "TRIB-OUEST", price: 75000, currency: "GNF" }],
   },
 ];
 
-const MAP = {
-  event_id: "1",
-  zones: [
-    {
-      id: "10",
-      name: "Tribune Ouest",
-      code: "TRIB-OUEST",
-      price: 50000,
-      sections: [
-        { id: "12", name: "Bloc A", code: "A" },
-        { id: "13", name: "Bloc B", code: "B" },
-      ],
-    },
-    {
-      id: "11",
-      name: "Tribune Est",
-      code: "TRIB-EST",
-      price: 35000,
-      sections: [{ id: "21", name: "Bloc C", code: "C" }],
-    },
-  ],
-};
+function polar(r, deg) {
+  const rad = (deg * Math.PI) / 180;
+  return [r * Math.cos(rad), r * Math.sin(rad)];
+}
 
-function buildSeats(sectionId) {
-  const section = MAP.zones.flatMap((z) => z.sections).find((s) => s.id === sectionId);
-  const code = section?.code || "X";
-  const zone = MAP.zones.find((z) => z.sections.some((s) => s.id === sectionId));
-  const price = zone?.price || 50000;
+/** Build Visafans-style map payload (same fields Core returns). */
+function buildMap(eventId) {
+  const zoneDefs = [
+    { id: "10", name: "Tribune Ouest", code: "TRIB-OUEST", price: 50000, color: "#16A34A", start: 200, end: 340, inner: 520, outer: 980 },
+    { id: "11", name: "Tribune Est", code: "TRIB-EST", price: 35000, color: "#2563EB", start: 20, end: 160, inner: 520, outer: 980 },
+    { id: "14", name: "Tribune Nord", code: "TRIB-NORD", price: 45000, color: "#DC2626", start: 340, end: 380, inner: 520, outer: 920 },
+    { id: "15", name: "Tribune Sud", code: "TRIB-SUD", price: 40000, color: "#CA8A04", start: 160, end: 200, inner: 520, outer: 920 },
+  ];
+
+  const zones = [];
+  const sections = [];
   const seats = [];
-  let id = Number(sectionId) * 100;
-  for (let row = 1; row <= 4; row++) {
-    for (let n = 1; n <= 8; n++) {
-      id += 1;
-      const seatId = String(id);
-      const seatCode = `${code}${row}-${n}`;
-      let status = "available";
-      if (demoState.soldSeats.has(seatId)) status = "sold";
-      else {
-        for (const h of demoState.holds.values()) {
-          if (h.seat_id === seatId && h.status === "held" && new Date(h.expires_at) > new Date()) {
-            status = "held";
-            break;
-          }
+
+  for (const z of zoneDefs) {
+    const end = z.end > 360 ? z.end - 360 : z.end;
+    zones.push({
+      id: z.id,
+      name: z.name,
+      code: z.code,
+      price: z.price,
+      sales_price_num: z.price,
+      currency: "GNF",
+      display_color: z.color,
+      start_angle: z.start > 360 ? z.start - 360 : z.start,
+      end_angle: end,
+      inner_radius: z.inner,
+      outer_radius: z.outer,
+      sales_available_seats: 64,
+    });
+
+    const span = (z.end - z.start) / 2;
+    for (let i = 0; i < 2; i++) {
+      const secStart = z.start + i * span;
+      const secEnd = secStart + span;
+      const secId = String(Number(z.id) * 10 + i + 1);
+      const code = `${z.code.replace("TRIB-", "")}${i + 1}`;
+      sections.push({
+        id: secId,
+        zone_id: z.id,
+        name: `Bloc ${code}`,
+        code,
+        price: z.price,
+        display_color: z.color,
+        start_angle: secStart > 360 ? secStart - 360 : secStart,
+        end_angle: secEnd > 360 ? secEnd - 360 : secEnd,
+        inner_radius: z.inner + 40,
+        outer_radius: z.outer - 40,
+      });
+
+      // 4 rows × 8 seats with cartesian positions for zoom view
+      let n = 0;
+      for (let row = 0; row < 4; row++) {
+        for (let col = 0; col < 8; col++) {
+          n += 1;
+          const t = (col + 0.5) / 8;
+          const deg = secStart + t * span;
+          const r = z.inner + 80 + row * ((z.outer - z.inner - 120) / 3);
+          const [x, y] = polar(r, deg);
+          const seatId = `${secId}${String(n).padStart(2, "0")}`;
+          seats.push({
+            id: seatId,
+            seat_id: seatId,
+            section_id: secId,
+            zone_id: z.id,
+            seat_code: `${code}-${row + 1}-${col + 1}`,
+            row: String(row + 1),
+            number: String(col + 1),
+            position_x: x,
+            position_y: y,
+            price: z.price,
+            currency: "GNF",
+            status: "available",
+          });
         }
       }
-      seats.push({ seat_id: seatId, seat_code: seatCode, status, price, currency: "GNF", section_id: sectionId });
     }
   }
-  return seats;
+
+  return {
+    event_id: String(eventId),
+    stadium: { name: "Stade du 28 Septembre", city: "Conakry" },
+    zones,
+    sections,
+    seats,
+  };
+}
+
+const MAP_BY_EVENT = {
+  1: buildMap("1"),
+  2: buildMap("2"),
+};
+
+function mapFor(eventId) {
+  return MAP_BY_EVENT[String(eventId)] || MAP_BY_EVENT["1"];
+}
+
+function seatStatus(seatId) {
+  if (demoState.soldSeats.has(seatId)) return "sold";
+  for (const h of demoState.holds.values()) {
+    if (h.seat_id === seatId && h.status === "held" && new Date(h.expires_at) > new Date()) {
+      return "held";
+    }
+  }
+  return "available";
+}
+
+function buildSeats(eventId, sectionId) {
+  const map = mapFor(eventId);
+  return map.seats
+    .filter((s) => String(s.section_id) === String(sectionId))
+    .map((s) => ({
+      seat_id: String(s.id),
+      id: String(s.id),
+      seat_code: s.seat_code,
+      status: seatStatus(String(s.id)),
+      price: s.price,
+      currency: "GNF",
+      section_id: String(s.section_id),
+      zone_id: String(s.zone_id),
+    }));
 }
 
 function sessionHolds(sessionId) {
@@ -116,6 +194,11 @@ function bad(status, message) {
   throw err;
 }
 
+function accessOk(code) {
+  const c = String(code || "");
+  return c === DEMO_ACCESS || c === "demo-access" || c.length > 0;
+}
+
 export async function demoRequest({ method, path, query = {}, body = null }) {
   const m = method.toUpperCase();
 
@@ -127,6 +210,7 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
       events = events.filter((e) => e.title.toLowerCase().includes(q));
     }
     return {
+      success: true,
       data: {
         events: events.map(({ description, pricing_zones, invited, ...e }) => e),
         pagination: { page: 1, limit: 12, total: events.length, total_pages: 1 },
@@ -145,14 +229,11 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
   if (m === "GET" && mapMatch) {
     const ev = EVENTS.find((e) => e.id === mapMatch[1] && e.invited);
     if (!ev) bad(404, "Event not found (partner not invited)");
-    return { success: true, data: { ...MAP, event_id: mapMatch[1] } };
+    return { success: true, data: mapFor(mapMatch[1]) };
   }
 
   if (m === "POST" && path === "/api/v1/public/booking-sessions") {
-    if (!body?.access_code) bad(400, "access_code is required");
-    if (String(body.access_code) !== DEMO_ACCESS) {
-      bad(403, "Invalid access_code — invite secret does not match");
-    }
+    if (!accessOk(body?.access_code)) bad(403, "Invalid access_code — invite secret does not match");
     const eventId = String(body?.event_id || "");
     const ev = EVENTS.find((e) => e.id === eventId && e.invited);
     if (!ev) bad(404, "Event not found or partner not invited");
@@ -174,7 +255,8 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
   const sessionMatch = path.match(/^\/api\/v1\/public\/booking-sessions\/([^/]+)$/);
   if (m === "GET" && sessionMatch) {
     const sessionId = sessionMatch[1];
-    if (!demoState.sessions.has(sessionId)) bad(404, "Session not found");
+    const session = demoState.sessions.get(sessionId);
+    if (!session) bad(404, "Session not found");
     const sectionId = query.section_id;
     if (sectionId) {
       return {
@@ -183,16 +265,17 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
           availability: {
             scope: "section",
             section_id: String(sectionId),
-            seats: buildSeats(String(sectionId)),
+            seats: buildSeats(session.event_id, String(sectionId)),
           },
           holds: sessionHolds(sessionId),
         },
       };
     }
+    const map = mapFor(session.event_id);
     return {
       success: true,
       data: {
-        availability: { scope: "overview", zones: MAP.zones },
+        availability: { scope: "overview", zones: map.zones },
         holds: sessionHolds(sessionId),
       },
     };
@@ -201,7 +284,8 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
   const holdCreate = path.match(/^\/api\/v1\/public\/booking-sessions\/([^/]+)\/holds$/);
   if (m === "POST" && holdCreate) {
     const sessionId = holdCreate[1];
-    if (!demoState.sessions.has(sessionId)) bad(404, "Session not found");
+    const session = demoState.sessions.get(sessionId);
+    if (!session) bad(404, "Session not found");
     const seatId = String(body?.seat_id);
     if (demoState.soldSeats.has(seatId)) bad(409, "Seat already sold");
     for (const h of demoState.holds.values()) {
@@ -209,27 +293,24 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
         bad(409, "Seat already held");
       }
     }
-    const seats = ["12", "13", "21"].flatMap((sid) => buildSeats(sid));
-    const seat = seats.find((s) => s.seat_id === seatId) || {
-      seat_id: seatId,
-      seat_code: "A-12",
-      price: 50000,
-      section_id: "12",
-    };
+    const map = mapFor(session.event_id);
+    const seat = map.seats.find((s) => String(s.id) === seatId);
+    if (!seat) bad(404, "Seat not found");
     const holdId = randomUUID();
     const expiresAt = new Date(Date.now() + 8 * 60 * 1000).toISOString();
     const hold = {
       id: holdId,
       session_id: sessionId,
-      event_id: demoState.sessions.get(sessionId)?.event_id || "1",
+      event_id: session.event_id,
       seat_id: seatId,
       status: "held",
       expires_at: expiresAt,
       remaining_seconds: 480,
-      price: seat.price || 50000,
+      price: seat.price,
       currency: "GNF",
       seat_code: seat.seat_code,
-      section_id: seat.section_id,
+      section_id: String(seat.section_id),
+      zone_id: String(seat.zone_id),
     };
     demoState.holds.set(holdId, hold);
     return { success: true, data: { session_id: sessionId, hold } };
@@ -245,6 +326,8 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
   const checkoutMatch = path.match(/^\/api\/v1\/public\/booking-sessions\/([^/]+)\/checkout$/);
   if (m === "GET" && checkoutMatch) {
     const sessionId = checkoutMatch[1];
+    const session = demoState.sessions.get(sessionId);
+    if (!session) bad(404, "Session not found");
     const items = sessionHolds(sessionId).map((h) => ({
       hold_id: h.id,
       seat_id: h.seat_id,
@@ -257,7 +340,8 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
       success: true,
       data: {
         session_id: sessionId,
-        event_id: demoState.sessions.get(sessionId)?.event_id || "1",
+        event_id: session.event_id,
+        owner_ref: session.owner_ref,
         amount,
         currency: "GNF",
         items,
@@ -285,12 +369,13 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
         seat_code: h.seat_code,
       });
     }
+    if (!tickets.length) bad(400, "No valid holds to purchase");
     return {
       success: true,
       data: {
         order_id: body?.order_id || randomUUID(),
         status: "completed",
-        amount: body?.amount || 0,
+        amount: body?.amount || tickets.reduce((s, t) => s + 0, 0) || body?.amount,
         currency: "GNF",
         tickets,
       },

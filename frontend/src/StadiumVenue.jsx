@@ -111,10 +111,12 @@ export default function StadiumVenue({
     return seats
       .filter((s) => String(s.section_id) === String(activeSectionId))
       .map((s) => {
-        const id = String(s.id);
+        const id = String(s.seat_id || s.id);
         const live = seatStatusById?.[id];
         return {
           ...s,
+          id,
+          seat_id: id,
           status: live?.status || s.status || "available",
           price: live?.price ?? s.price,
           seat_code: live?.seat_code || s.seat_code,
@@ -218,7 +220,7 @@ export default function StadiumVenue({
 
         {mode === "seats" &&
           sectionSeats.map((seat) => {
-            const id = String(seat.id);
+            const id = String(seat.seat_id || seat.id);
             const mine = selected.has(id);
             const sold = seat.status === "sold" || seat.status === "reserved";
             const held = seat.status === "held" && !mine;
