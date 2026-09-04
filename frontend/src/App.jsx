@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import StadiumVenue, { SectionList, formatGnf as formatGnfVenue, zonePrice } from "./StadiumVenue";
 
@@ -84,6 +84,9 @@ export default function App() {
   const [modeBusy, setModeBusy] = useState(false);
   const [showLiveForm, setShowLiveForm] = useState(false);
   const [partnerSecret, setPartnerSecret] = useState("");
+  const [openingMap, setOpeningMap] = useState(false);
+  /** Full seat geometry kept out of React state (Live maps are ~20k seats). */
+  const allSeatsRef = useRef([]);
 
   useEffect(() => {
     (async () => {
@@ -100,6 +103,7 @@ export default function App() {
   function clearBookingState() {
     setEvent(null);
     setMap(null);
+    allSeatsRef.current = [];
     setSession(null);
     setSectionId("");
     setZoneId("");
@@ -108,6 +112,7 @@ export default function App() {
     setSeatStatusById({});
     setCheckout(null);
     setResult(null);
+    setOpeningMap(false);
     setView(VIEWS.events);
   }
 
@@ -198,12 +203,15 @@ export default function App() {
         price: byCode[z.code] ?? byName[z.name] ?? z.price ?? z.sales_price_num ?? null,
         sales_price_num: z.sales_price_num ?? byCode[z.code] ?? byName[z.name] ?? null,
       }));
+      // Keep heavy seat list in a ref — putting ~20k seats in state freezes the UI
+      allSeatsRef.current = mapData.seats || [];
       setEvent(detailData);
       setMap({
-        ...mapData,
+        event_id: mapData.event_id,
+        stadium: mapData.stadium,
         zones: enrichedZones,
         sections: mapData.sections || [],
-        seats: mapData.seats || [],
+        seats: [],
       });
       setZoneId("");
       setView(VIEWS.detail);
@@ -215,8 +223,8 @@ export default function App() {
   }
 
   async function openMap() {
-    if (!event) return;
-    setLoading(true);
+    if (!event || openingMap) return;
+    setOpeningMap(true);
     setError("");
     try {
       let sess = session;
@@ -225,7 +233,10 @@ export default function App() {
           event_id: event.id,
           owner_ref: "demo-booking-user",
         });
-        sess = sessionRes.data || sessionRes;
+        sess = sessionRes?.data || sessionRes;
+        if (!sess?.session_id) {
+          throw new Error("Booking session created but session_id missing.");
+        }
         setSession(sess);
       }
       setMapStep("zones");
@@ -234,11 +245,12 @@ export default function App() {
       setSelected([]);
       setSeatStatusById({});
       setCheckout(null);
+      setMap((prev) => (prev ? { ...prev, seats: [] } : prev));
       setView(VIEWS.map);
     } catch (e) {
       setError(e.message || "Could not start booking. Please try again.");
     } finally {
-      setLoading(false);
+      setOpeningMap(false);
     }
   }
 
@@ -246,6 +258,7 @@ export default function App() {
     setZoneId(String(zone.id));
     setSectionId("");
     setSeatStatusById({});
+    setMap((prev) => (prev ? { ...prev, seats: [] } : prev));
     setMapStep("sections");
   }
 
@@ -281,13 +294,17 @@ export default function App() {
       setError("Create a booking session first.");
       return;
     }
-    setSectionId(String(section.id));
+    const secId = String(section.id);
+    setSectionId(secId);
     setZoneId(String(section.zone_id || zoneId));
     setMapStep("seats");
     setSeatsLoading(true);
     setError("");
+    // Attach only this section's seat geometry (not the whole stadium)
+    const geo = allSeatsRef.current.filter((s) => String(s.section_id) === secId);
+    setMap((prev) => (prev ? { ...prev, seats: geo } : prev));
     try {
-      await loadSectionSeats(session.session_id, section.id);
+      await loadSectionSeats(session.session_id, secId);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -448,6 +465,7 @@ export default function App() {
     setView(VIEWS.events);
     setEvent(null);
     setMap(null);
+    allSeatsRef.current = [];
     setSession(null);
     setSelected([]);
     setSeatStatusById({});
@@ -456,6 +474,7 @@ export default function App() {
     setMapStep("zones");
     setZoneId("");
     setSectionId("");
+    setOpeningMap(false);
     loadEvents();
   }
 
@@ -685,8 +704,8 @@ export default function App() {
                     </button>
                   </div>
                   <p className="pb-muted small">Choose your stand and seats on the stadium map.</p>
-                  <button type="button" className="primary wide" disabled={loading} onClick={openMap}>
-                    {loading ? "Opening…" : "Select seats"}
+                  <button type="button" className="primary wide" disabled={openingMap || loading} onClick={openMap}>
+                    {openingMap ? "Opening…" : "Select seats"}
                   </button>
                 </div>
                 <div className="mini-map preview">
