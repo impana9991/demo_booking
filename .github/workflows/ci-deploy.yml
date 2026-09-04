@@ -1,6 +1,6 @@
-# Build frontend → rsync to /var/www/html/parts_books
-# nginx SPA for demo.stadepassgn.com · partner API on :4100 (Core keeps :8000)
-# No GHCR.
+# Build SPA in GitHub Actions, deploy to EC2:
+#   /var/www/html/parts_books  +  HTTPS demo.stadepassgn.com
+#   partner API :4100 (Core stays on :8000)
 name: CI and deploy
 
 on:
@@ -19,7 +19,10 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - uses: actions/setup-node@v4
         with:
@@ -58,7 +61,10 @@ jobs:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Download build artifact
         uses: actions/download-artifact@v4
@@ -66,34 +72,61 @@ jobs:
           name: frontend-build
           path: build
 
-      - name: Rsync SPA + nginx for demo.stadepassgn.com
+      - name: Check required secrets
         env:
-          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          HOST: ${{ secrets.EC2_HOST }}
-          USER: ${{ secrets.EC2_USER }}
-          EC2_WEB_ROOT: ${{ secrets.EC2_WEB_ROOT }}
-          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
-          EC2_DOMAIN: ${{ secrets.EC2_DOMAIN }}
-          STAGING_DIR: ci_deploy_build
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          GH_USERNAME: ${{ secrets.GH_USERNAME }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
         run: |
           set -eu
-          if [ -z "${HOST:-}" ] || [ -z "${USER:-}" ] || [ -z "${SSH_KEY:-}" ]; then
-            echo "Missing EC2_HOST / EC2_USER / EC2_SSH_KEY"
+          ok=1
+          for name in EC2_HOST EC2_USER EC2_SSH_KEY; do
+            eval "val=\${$name:-}"
+            if [ -z "$val" ]; then
+              echo "MISSING secret: $name"
+              ok=0
+            else
+              echo "OK secret: $name"
+            fi
+          done
+          if [ -z "${GH_USERNAME:-}" ]; then
+            echo "WARN: GH_USERNAME not set (server git sync skipped)"
+          else
+            echo "OK secret: GH_USERNAME"
+          fi
+          if [ -z "${GH_PAT:-}" ] && [ -z "${GITHUB_PAT:-}" ]; then
+            echo "WARN: GH_PAT / GITHUB_PAT not set (server git sync skipped; checkout still works)"
+          else
+            echo "OK secret: GH_PAT"
+          fi
+          if [ "$ok" != 1 ]; then
+            echo ""
+            echo "Add these under Settings → Secrets and variables → Actions:"
+            echo "  EC2_HOST      = 108.130.89.241"
+            echo "  EC2_USER      = ubuntu"
+            echo "  EC2_SSH_KEY   = (private key PEM, full file)"
+            echo "  GH_USERNAME   = your GitHub username"
+            echo "  GH_PAT        = classic PAT with repo scope"
             exit 1
           fi
-          export DEST="${EC2_WEB_ROOT:-/var/www/html/parts_books}"
-          export EC2_DOMAIN="${EC2_DOMAIN:-demo.stadepassgn.com}"
-          test -f build/index.html
-          chmod +x deploy/rsync-to-ec2.sh
-          bash deploy/rsync-to-ec2.sh
 
-      - name: Deploy partner API on :4100
+      - name: Deploy SPA + nginx HTTPS + API :4100
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           HOST: ${{ secrets.EC2_HOST }}
           USER: ${{ secrets.EC2_USER }}
           EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
+          EC2_DOMAIN: ${{ secrets.EC2_DOMAIN }}
+          EC2_WEB_ROOT: ${{ secrets.EC2_WEB_ROOT }}
+          GH_USERNAME: ${{ secrets.GH_USERNAME }}
+          GH_PAT: ${{ secrets.GH_PAT || secrets.GITHUB_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -eu
-          chmod +x deploy/deploy-api-on-ec2.sh
-          bash deploy/deploy-api-on-ec2.sh
+          export DEST="${EC2_WEB_ROOT:-/var/www/html/parts_books}"
+          export EC2_DOMAIN="${EC2_DOMAIN:-demo.stadepassgn.com}"
+          chmod +x deploy/ec2-deploy.sh deploy/apply-spa-on-server.sh
+          bash deploy/ec2-deploy.sh
