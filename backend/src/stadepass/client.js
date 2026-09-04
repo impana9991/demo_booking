@@ -74,7 +74,7 @@ export async function stadepassRequest({ method, path, query = {}, body = null }
     });
   } catch (e) {
     const err = new Error(
-      `Cannot reach StadePass at ${base} (${e.message}). Start Core on :8000 or set DEMO_MODE=true.`
+      `Cannot reach StadePass at ${base} (${e.message}). Check STADEPASS_BASE_URL or stay in Demo.`
     );
     err.status = 503;
     throw err;

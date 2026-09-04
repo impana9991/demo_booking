@@ -37,7 +37,7 @@ cd '${COMPOSE_DIR}'
 if [ ! -f .env ]; then
   cat > .env <<'ENV'
 PORT=4100
-STADEPASS_BASE_URL=http://172.17.0.1:8000
+STADEPASS_BASE_URL=https://book.stadepassgn.com
 STADEPASS_PARTNER_CODE=PARTSBOOKING
 STADEPASS_PARTNER_ID=2
 STADEPASS_API_KEY=replace_me
@@ -47,7 +47,6 @@ ENV
 fi
 docker build -t '${IMAGE_LOCAL}' .
 export DEMO_BOOKING_IMAGE='${IMAGE_LOCAL}'
-export STADEPASS_BASE_URL="\${STADEPASS_BASE_URL:-http://172.17.0.1:8000}"
 DEMO_BOOKING_IMAGE='${IMAGE_LOCAL}' docker compose up -d --force-recreate
 docker ps --filter name=parts_books_api
 curl -sf http://127.0.0.1:4100/api/health || true

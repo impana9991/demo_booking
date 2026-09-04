@@ -32,8 +32,21 @@ sudo nginx -T 2>/dev/null | grep -A2 'server_name demo'
 |---|---|
 | `ticket_front_app` / Core **:8000** | Existing — do not touch |
 | `/var/www/html/parts_books` | Demo Booking SPA |
-| **:4100** `parts_books_api` | Partner API → Core :8000 |
+| **:4100** `parts_books_api` | Partner API → **https://book.stadepassgn.com** |
 | `demo.stadepassgn.com` | This SPA + `/api` → :4100 |
+
+## Server `.env` (`/var/www/html/parts_books_api/.env`)
+
+```env
+PORT=4100
+STADEPASS_BASE_URL=https://book.stadepassgn.com
+STADEPASS_PARTNER_CODE=PARTSBOOKING
+STADEPASS_PARTNER_ID=2
+STADEPASS_API_KEY=spk_...
+STADEPASS_API_SECRET=sps_...
+STADEPASS_EVENT_ID=8
+STADEPASS_EVENT_ACCESS_CODE=your_event_secret
+```
 
 ## GitHub secrets only (no GHCR)
 

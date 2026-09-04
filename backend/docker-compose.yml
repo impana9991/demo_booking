@@ -10,8 +10,7 @@ services:
       - .env
     environment:
       PORT: "4100"
-      # Reach Core on the host (ticket_back_app publishes 8000)
-      STADEPASS_BASE_URL: ${STADEPASS_BASE_URL:-http://172.17.0.1:8000}
+      STADEPASS_BASE_URL: ${STADEPASS_BASE_URL:-https://book.stadepassgn.com}
     healthcheck:
       test:
         [
