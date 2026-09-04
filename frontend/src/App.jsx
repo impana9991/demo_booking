@@ -116,6 +116,8 @@ export default function App() {
     setError("");
     setShowLiveForm(false);
     setPartnerSecret("");
+    setQuery("");
+    setCategory("");
     try {
       const res = await api.setMode({ mode: "demo" });
       setMode(res.mode || "demo");
@@ -137,6 +139,8 @@ export default function App() {
     }
     setModeBusy(true);
     setError("");
+    setQuery("");
+    setCategory("");
     try {
       const res = await api.setMode({ mode: "live", partner_secret: secret });
       setMode(res.mode || "live");
@@ -147,6 +151,7 @@ export default function App() {
     } catch (err) {
       setError(err.message || "Could not switch to Live.");
       setMode("demo");
+      await loadEvents("", "");
     } finally {
       setModeBusy(false);
     }
@@ -160,9 +165,14 @@ export default function App() {
         q: nextQuery || undefined,
         category: nextCategory || undefined,
       });
-      setEvents(res.data?.events || []);
+      if (typeof res.demo === "boolean") {
+        setMode(res.demo ? "demo" : "live");
+      }
+      const list = res.data?.events ?? res.events ?? [];
+      setEvents(Array.isArray(list) ? list : []);
     } catch (e) {
       setError(e.message);
+      setEvents([]);
     } finally {
       setLoading(false);
     }
@@ -592,7 +602,11 @@ export default function App() {
             ) : events.length === 0 ? (
               <div className="empty">
                 <h2>No events available</h2>
-                <p>Check back soon for upcoming matches and shows.</p>
+                <p>
+                  {mode === "live"
+                    ? "Live is on, but book.stadepassgn.com returned no invited events for this partner. Switch to Demo for mock events, or check the partner invite."
+                    : "Demo should show sample matches — click Demo, then refresh."}
+                </p>
               </div>
             ) : (
               <div className="event-grid">
