@@ -1,54 +1,13 @@
 # Deploy: demo.stadepassgn.com → EC2 (no GHCR)
 
-## Why you see "Stadium Ticket API is running (ticket_back_app)"
+Push to `main` will:
 
-DNS for `demo.stadepassgn.com` points at the EC2 box, but nginx has **no site** for that host yet, so the **default** server answers — and that default is Core (`ticket_back_app` on :8000).
+1. Build the Vite SPA  
+2. Rsync to `/var/www/html/parts_books`  
+3. Install nginx **HTTPS** for `demo.stadepassgn.com` (certbot) so Cloudflare does **not** fall through to `ticket_back_app`  
+4. Build/run partner API on **:4100** (`/api` → 4100 only, never :8000)
 
-Fix: add a dedicated nginx `server_name demo.stadepassgn.com` → `/var/www/html/parts_books`.
-
-## One-time on EC2 (SSH in and run)
-
-```bash
-cd /tmp
-# paste bootstrap-demo-site.sh from this repo, or:
-curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/YOUR_REPO/main/deploy/bootstrap-demo-site.sh -o bootstrap-demo-site.sh
-sudo bash bootstrap-demo-site.sh
-```
-
-Or copy-paste the script from `deploy/bootstrap-demo-site.sh`.
-
-Check:
-
-```bash
-curl -sI -H 'Host: demo.stadepassgn.com' http://127.0.0.1/ | head
-# should NOT say ticket_back_app
-ls /var/www/html/parts_books
-sudo nginx -T 2>/dev/null | grep -A2 'server_name demo'
-```
-
-## Layout (unchanged apps stay)
-
-| Path / port | App |
-|---|---|
-| `ticket_front_app` / Core **:8000** | Existing — do not touch |
-| `/var/www/html/parts_books` | Demo Booking SPA |
-| **:4100** `parts_books_api` | Partner API → **https://book.stadepassgn.com** |
-| `demo.stadepassgn.com` | This SPA + `/api` → :4100 |
-
-## Server `.env` (`/var/www/html/parts_books_api/.env`)
-
-```env
-PORT=4100
-STADEPASS_BASE_URL=https://book.stadepassgn.com
-STADEPASS_PARTNER_CODE=PARTSBOOKING
-STADEPASS_PARTNER_ID=2
-STADEPASS_API_KEY=spk_...
-STADEPASS_API_SECRET=sps_...
-STADEPASS_EVENT_ID=8
-STADEPASS_EVENT_ACCESS_CODE=your_event_secret
-```
-
-## GitHub secrets only (no GHCR)
+## GitHub secrets
 
 | Secret | Value |
 |---|---|
@@ -58,4 +17,27 @@ STADEPASS_EVENT_ACCESS_CODE=your_event_secret
 | `EC2_DOMAIN` | `demo.stadepassgn.com` (optional) |
 | `EC2_WEB_ROOT` | `/var/www/html/parts_books` (optional) |
 
-Push `main` → build + rsync SPA + docker API on **4100**.
+## Server `.env` (once, manual)
+
+`/var/www/html/parts_books_api/.env`:
+
+```env
+PORT=4100
+STADEPASS_BASE_URL=https://book.stadepassgn.com
+STADEPASS_PARTNER_CODE=PARTSBOOKING
+STADEPASS_PARTNER_ID=2
+STADEPASS_API_KEY=spk_...
+STADEPASS_API_SECRET=sps_...
+STADEPASS_EVENT_ACCESS_CODE=...
+```
+
+## Cloudflare
+
+SSL/TLS for `demo` = **Full** (certbot creates the origin cert on deploy).
+
+## Manual fix (if needed before first push)
+
+```bash
+cd /path/to/repo/deploy
+sudo bash bootstrap-demo-site.sh
+```

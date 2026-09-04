@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rsync frontend build to EC2 web root (parts_books) + apply SPA nginx.
+# Rsync frontend build to EC2 + force SPA nginx/HTTPS for demo.stadepassgn.com
 set -eu
 
 SSH_PORT="${EC2_SSH_PORT:-22}"
@@ -16,25 +16,27 @@ SSH_BASE=(ssh -i "$KEY_FILE" -p "$SSH_PORT" -o StrictHostKeyChecking=accept-new 
 RSYNC_SSH="ssh -i ${KEY_FILE} -p ${SSH_PORT} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null"
 
 echo "Uploading build → ${USER}@${HOST}:${DEST}"
-"${SSH_BASE[@]}" "${USER}@${HOST}" "mkdir -p ~/${STAGING_DIR} ~/demo_booking_deploy && sudo mkdir -p '${DEST}'"
+"${SSH_BASE[@]}" "${USER}@${HOST}" "mkdir -p ~/${STAGING_DIR} ~/demo_booking_deploy && sudo mkdir -p '${DEST}' /var/www/certbot"
 
 rsync -az --delete -e "$RSYNC_SSH" ./build/ "${USER}@${HOST}:~/${STAGING_DIR}/"
 
 rsync -az -e "$RSYNC_SSH" \
-  deploy/nginx-demo.stadepassgn.com.conf \
   deploy/apply-spa-on-server.sh \
+  deploy/nginx-demo.stadepassgn.com.conf \
   "${USER}@${HOST}:~/demo_booking_deploy/"
 
 "${SSH_BASE[@]}" "${USER}@${HOST}" bash -s <<EOF
 set -eu
 sudo rsync -a --delete ~/${STAGING_DIR}/ '${DEST}/'
 sudo chown -R www-data:www-data '${DEST}'
+test -f '${DEST}/index.html'
 rm -rf ~/${STAGING_DIR}
 cd ~/demo_booking_deploy
 chmod +x apply-spa-on-server.sh
 export EC2_DOMAIN='${DOMAIN}'
 export EC2_WEB_ROOT='${DEST}'
-sudo bash apply-spa-on-server.sh "\$HOME/demo_booking_deploy/nginx-demo.stadepassgn.com.conf"
+export EC2_API_PORT='4100'
+sudo -E bash apply-spa-on-server.sh
 EOF
 
-echo "Deployed static site to ${DEST} for ${DOMAIN}"
+echo "Deployed SPA to ${DEST} for ${DOMAIN}"
