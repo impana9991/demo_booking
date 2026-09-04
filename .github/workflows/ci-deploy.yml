@@ -1,0 +1,133 @@
+# Build frontend in GitHub, rsync to EC2 /var/www/html/parts_books,
+# nginx SPA for demo.stadepassgn.com, partner API on :4100 (Core keeps :8000).
+name: CI and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_TAG: main
+  EC2_DOMAIN_DEFAULT: demo.stadepassgn.com
+  EC2_WEB_ROOT_DEFAULT: /var/www/html/parts_books
+
+jobs:
+  ci:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Production build
+        working-directory: frontend
+        env:
+          CI: "true"
+        run: npm run build
+
+      - name: Stage artifact as build/
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: |
+          test -f frontend/dist/index.html
+          mkdir -p build
+          cp -a frontend/dist/. build/
+
+      - name: Upload build artifact
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: build
+          retention-days: 2
+
+  push-image:
+    name: Push API image to GHCR (optional backup)
+    needs: ci
+    continue-on-error: true
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image slug (GHCR must be lowercase)
+        run: |
+          echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/demo-booking-api:${{ env.IMAGE_TAG }}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: backend
+          push: true
+          tags: ${{ env.IMAGE }}
+
+  deploy:
+    name: Deploy to EC2
+    needs: ci
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: build
+
+      - name: Rsync SPA + nginx for demo.stadepassgn.com
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+          EC2_WEB_ROOT: ${{ secrets.EC2_WEB_ROOT }}
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
+          EC2_DOMAIN: ${{ secrets.EC2_DOMAIN }}
+          STAGING_DIR: ci_deploy_build
+        run: |
+          set -eu
+          if [ -z "${HOST:-}" ] || [ -z "${USER:-}" ] || [ -z "${SSH_KEY:-}" ]; then
+            echo "Missing EC2_HOST / EC2_USER / EC2_SSH_KEY"
+            exit 1
+          fi
+          export DEST="${EC2_WEB_ROOT:-/var/www/html/parts_books}"
+          export EC2_DOMAIN="${EC2_DOMAIN:-demo.stadepassgn.com}"
+          test -f build/index.html
+          chmod +x deploy/rsync-to-ec2.sh
+          bash deploy/rsync-to-ec2.sh
+
+      - name: Deploy partner API on :4100
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT }}
+        run: |
+          set -eu
+          chmod +x deploy/deploy-api-on-ec2.sh
+          bash deploy/deploy-api-on-ec2.sh
