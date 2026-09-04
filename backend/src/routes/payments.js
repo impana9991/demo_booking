@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import { isDemoMode, stadepassRequest } from "../stadepass/client.js";
+import { saveOrder } from "../tickets/store.js";
 
 const router = Router();
 
@@ -22,6 +23,7 @@ router.post("/pay", async (req, res, next) => {
       seat_ids = [],
       payment_method = "ORANGE_MONEY",
       payment_status = "yes",
+      event_title = null,
     } = req.body || {};
 
     if (!session_id) {
@@ -102,17 +104,28 @@ router.post("/pay", async (req, res, next) => {
 
       const purchase = purchaseRes.data || purchaseRes;
       const tickets = purchase.tickets || purchase.data?.tickets || [];
+      const purchaseOut = {
+        ...purchase,
+        tickets,
+        order_id: purchase.order_id || orderId,
+      };
+      saveOrder({
+        order_id: purchaseOut.order_id,
+        demo: isDemoMode(),
+        event_id: checkout.event_id,
+        event_title,
+        amount,
+        currency: checkout.currency || "GNF",
+        payment_reference: payment.reference,
+        tickets,
+      });
       return res.json({
         success: true,
         demo: isDemoMode(),
         payment,
         checkout,
         checkout_token: checkout.checkout_token,
-        purchase: {
-          ...purchase,
-          tickets,
-          order_id: purchase.order_id || orderId,
-        },
+        purchase: purchaseOut,
       });
     } catch (e) {
       // Core bug on invited events: holds+checkout OK, POST /purchases → Event not found.
@@ -127,12 +140,24 @@ router.post("/pay", async (req, res, next) => {
           status: isDemoMode() ? "SOLD" : "CONFIRMED",
           price: item.price,
         }));
+        const warning = isDemoMode()
+          ? null
+          : "Payment recorded on partner side. Core POST /purchases returned Event not found — ticket numbers are provisional until Core fixes invited-event purchases.";
+        saveOrder({
+          order_id: orderId,
+          demo: isDemoMode(),
+          event_id: checkout.event_id,
+          event_title,
+          amount,
+          currency: checkout.currency || "GNF",
+          payment_reference: payment.reference,
+          warning,
+          tickets,
+        });
         return res.json({
           success: true,
           demo: isDemoMode(),
-          warning: isDemoMode()
-            ? null
-            : "Payment recorded on partner side. Core POST /purchases returned Event not found — ticket numbers are provisional until Core fixes invited-event purchases.",
+          warning,
           payment,
           checkout,
           checkout_token: checkout.checkout_token,

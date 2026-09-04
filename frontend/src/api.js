@@ -60,4 +60,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ payment_status: "yes", ...body }),
     }),
+  /** Partner dashboard ticket/order list */
+  listTickets: () => request("/api/tickets"),
 };

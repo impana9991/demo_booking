@@ -4,6 +4,7 @@ import cors from "cors";
 import eventsRouter from "./routes/events.js";
 import sessionsRouter from "./routes/sessions.js";
 import paymentsRouter from "./routes/payments.js";
+import ticketsRouter from "./routes/tickets.js";
 import { isDemoMode, stadepassRequest } from "./stadepass/client.js";
 import { runtimePublic, setRuntimeMode } from "./stadepass/runtime.js";
 
@@ -55,6 +56,7 @@ app.post("/api/mode", async (req, res, next) => {
 app.use("/api/events", eventsRouter);
 app.use("/api/booking-sessions", sessionsRouter);
 app.use("/api/payments", paymentsRouter);
+app.use("/api/tickets", ticketsRouter);
 
 app.use((err, _req, res, _next) => {
   const status = err.status || 500;

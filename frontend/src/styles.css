@@ -1050,6 +1050,44 @@ select {
   font-size: 1.2rem;
 }
 
+.tickets-nav {
+  white-space: nowrap;
+}
+
+.tickets-dash h1 {
+  margin: 0.35rem 0 0.25rem;
+  font-family: var(--display);
+  letter-spacing: -0.03em;
+}
+
+.orders-list {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.order-card {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.15rem;
+  box-shadow: var(--shadow);
+}
+
+.order-card > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.65rem;
+}
+
+.order-card h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-family: var(--display);
+}
+
 .pb-footer {
   display: flex;
   flex-wrap: wrap;

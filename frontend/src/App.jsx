@@ -55,9 +55,28 @@ const VIEWS = {
   map: "map",
   checkout: "checkout",
   success: "success",
+  tickets: "tickets",
 };
 
 const FLOW = ["Events", "Details", "Seats", "Pay", "Done"];
+const TICKETS_KEY = "demo-booking-tickets";
+
+function loadLocalOrders() {
+  try {
+    const raw = localStorage.getItem(TICKETS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalOrder(order) {
+  const prev = loadLocalOrders();
+  const next = [order, ...prev.filter((o) => o.id !== order.id)].slice(0, 100);
+  localStorage.setItem(TICKETS_KEY, JSON.stringify(next));
+  return next;
+}
 
 export default function App() {
   const [view, setView] = useState(VIEWS.events);
@@ -85,6 +104,7 @@ export default function App() {
   const [showLiveForm, setShowLiveForm] = useState(false);
   const [partnerSecret, setPartnerSecret] = useState("");
   const [openingMap, setOpeningMap] = useState(false);
+  const [orders, setOrders] = useState(() => loadLocalOrders());
   /** Full seat geometry kept out of React state (Live maps are ~20k seats). */
   const allSeatsRef = useRef([]);
 
@@ -439,6 +459,26 @@ export default function App() {
     }
   }
 
+  async function openTickets() {
+    setView(VIEWS.tickets);
+    setError("");
+    try {
+      const res = await api.listTickets();
+      const fromApi = res.data?.orders || [];
+      if (fromApi.length) {
+        const merged = [...fromApi, ...loadLocalOrders()].filter(
+          (o, i, arr) => arr.findIndex((x) => String(x.id) === String(o.id)) === i
+        );
+        setOrders(merged);
+        localStorage.setItem(TICKETS_KEY, JSON.stringify(merged.slice(0, 100)));
+      } else {
+        setOrders(loadLocalOrders());
+      }
+    } catch {
+      setOrders(loadLocalOrders());
+    }
+  }
+
   async function confirmPayment() {
     if (!session?.session_id || !selected.length) return;
     setPaying(true);
@@ -450,6 +490,7 @@ export default function App() {
         hold_ids: selected.map((s) => s.hold_id).filter(Boolean),
         payment_method: "ORANGE_MONEY",
         payment_status: "yes",
+        event_title: event?.title || null,
       });
       const tickets =
         res.purchase?.tickets ||
@@ -463,7 +504,6 @@ export default function App() {
           status: "CONFIRMED",
         }));
       if (!tickets.length) {
-        // Last resort: seats the user held in the UI
         for (const [idx, s] of selected.entries()) {
           tickets.push({
             id: s.hold_id || s.seat_id || String(idx),
@@ -474,14 +514,29 @@ export default function App() {
           });
         }
       }
-      setResult({
+      const orderId = res.purchase?.order_id || res.payment?.reference || `ord-${Date.now()}`;
+      const resultPayload = {
         ...res,
         purchase: {
           ...(res.purchase || {}),
-          order_id: res.purchase?.order_id || res.payment?.reference,
+          order_id: orderId,
           tickets,
         },
-      });
+      };
+      setResult(resultPayload);
+      const localOrder = {
+        id: orderId,
+        created_at: new Date().toISOString(),
+        demo: Boolean(res.demo),
+        event_id: event?.id || res.checkout?.event_id || null,
+        event_title: event?.title || null,
+        amount: res.payment?.amount ?? res.checkout?.amount ?? null,
+        currency: res.payment?.currency || "GNF",
+        payment_reference: res.payment?.reference || null,
+        warning: res.warning || null,
+        tickets,
+      };
+      setOrders(saveLocalOrder(localOrder));
       setView(VIEWS.success);
     } catch (e) {
       setError(e.message);
@@ -526,7 +581,9 @@ export default function App() {
           ? 2
           : view === VIEWS.checkout
             ? 3
-            : 4;
+            : view === VIEWS.success
+              ? 4
+              : -1;
 
   return (
     <div className="pb">
@@ -536,13 +593,18 @@ export default function App() {
           Demo Booking
         </button>
         <div className="pb-header-tools">
-          <nav className="pb-crumb" aria-label="Progress">
-            {FLOW.map((label, i) => (
-              <span key={label} className={i <= flowIndex ? "on" : ""}>
-                {label}
-              </span>
-            ))}
-          </nav>
+          {view !== VIEWS.tickets && (
+            <nav className="pb-crumb" aria-label="Progress">
+              {FLOW.map((label, i) => (
+                <span key={label} className={i <= flowIndex ? "on" : ""}>
+                  {label}
+                </span>
+              ))}
+            </nav>
+          )}
+          <button type="button" className="ghost-btn tickets-nav" onClick={openTickets}>
+            My tickets{orders.length ? ` (${orders.reduce((n, o) => n + (o.tickets?.length || 0), 0)})` : ""}
+          </button>
           <div className="mode-switch" role="group" aria-label="Booking mode">
             <button
               type="button"
@@ -998,9 +1060,62 @@ export default function App() {
                 ))
               )}
             </ul>
-            <button type="button" className="primary" onClick={resetHome}>
+            <button type="button" className="primary" onClick={openTickets}>
+              View all tickets
+            </button>
+            <button type="button" className="ghost-btn" onClick={resetHome} style={{ marginLeft: "0.5rem" }}>
               Back to events
             </button>
+          </section>
+        )}
+
+        {view === VIEWS.tickets && (
+          <section className="fade tickets-dash">
+            <button type="button" className="back" onClick={resetHome}>
+              ← All events
+            </button>
+            <h1>My tickets</h1>
+            <p className="pb-muted">Orders booked in this app (Demo & Live).</p>
+
+            {!orders.length ? (
+              <div className="empty">
+                <h2>No tickets yet</h2>
+                <p>Book seats and pay — your tickets will show up here.</p>
+                <button type="button" className="primary" onClick={resetHome}>
+                  Browse events
+                </button>
+              </div>
+            ) : (
+              <div className="orders-list">
+                {orders.map((o) => (
+                  <article key={o.id} className="order-card">
+                    <header>
+                      <div>
+                        <h2>{o.event_title || `Event ${o.event_id || "—"}`}</h2>
+                        <p className="pb-muted small">
+                          {o.created_at ? new Date(o.created_at).toLocaleString() : ""}
+                          {o.demo ? " · Demo" : " · Live"}
+                          {o.payment_reference ? ` · ${o.payment_reference}` : ""}
+                        </p>
+                      </div>
+                      <strong>{formatGnf(o.amount)}</strong>
+                    </header>
+                    {o.warning && <p className="pb-muted small">{o.warning}</p>}
+                    <ul className="ticket-cards">
+                      {(o.tickets || []).map((t) => (
+                        <li key={t.id || t.ticket_number || t.seat_id}>
+                          <strong>{t.ticket_number || t.id || "Ticket"}</strong>
+                          <span>
+                            Seat {t.seat_code || t.seat_id || "—"}
+                            {t.status ? ` · ${t.status}` : ""}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                ))}
+              </div>
+            )}
           </section>
         )}
       </main>
