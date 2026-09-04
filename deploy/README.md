@@ -1,42 +1,48 @@
-# Deploy: demo.stadepassgn.com → EC2
+# Deploy: demo.stadepassgn.com → EC2 (no GHCR)
 
-## Layout on the server (does not touch existing apps)
+## Why you see "Stadium Ticket API is running (ticket_back_app)"
+
+DNS for `demo.stadepassgn.com` points at the EC2 box, but nginx has **no site** for that host yet, so the **default** server answers — and that default is Core (`ticket_back_app` on :8000).
+
+Fix: add a dedicated nginx `server_name demo.stadepassgn.com` → `/var/www/html/parts_books`.
+
+## One-time on EC2 (SSH in and run)
+
+```bash
+cd /tmp
+# paste bootstrap-demo-site.sh from this repo, or:
+curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/YOUR_REPO/main/deploy/bootstrap-demo-site.sh -o bootstrap-demo-site.sh
+sudo bash bootstrap-demo-site.sh
+```
+
+Or copy-paste the script from `deploy/bootstrap-demo-site.sh`.
+
+Check:
+
+```bash
+curl -sI -H 'Host: demo.stadepassgn.com' http://127.0.0.1/ | head
+# should NOT say ticket_back_app
+ls /var/www/html/parts_books
+sudo nginx -T 2>/dev/null | grep -A2 'server_name demo'
+```
+
+## Layout (unchanged apps stay)
 
 | Path / port | App |
 |---|---|
-| `/var/www/html/ticket_front_app` | Existing office frontend |
-| `/var/www/html/ticket_back_app` + **:8000** | StadePass Core |
-| `/var/www/html/parts_books` | **This** Demo Booking SPA |
-| **:4100** (`parts_books_api`) | **This** partner API → proxies to Core :8000 |
-| `demo.stadepassgn.com` | DNS A → EC2 (already set) |
+| `ticket_front_app` / Core **:8000** | Existing — do not touch |
+| `/var/www/html/parts_books` | Demo Booking SPA |
+| **:4100** `parts_books_api` | Partner API → Core :8000 |
+| `demo.stadepassgn.com` | This SPA + `/api` → :4100 |
 
-## One-time on EC2
+## GitHub secrets only (no GHCR)
 
-```bash
-sudo mkdir -p /var/www/html/parts_books /var/www/html/parts_books_api
-sudo chown -R ubuntu:ubuntu /var/www/html/parts_books_api
-
-# Partner secrets (Live mode). Never commit this file.
-nano /var/www/html/parts_books_api/.env
-# copy from backend/.env.example — set STADEPASS_* and PORT=4100
-# STADEPASS_BASE_URL=http://172.17.0.1:8000
-```
-
-Optional TLS after first HTTP deploy:
-
-```bash
-sudo certbot --nginx -d demo.stadepassgn.com
-```
-
-## GitHub Actions secrets
-
-| Secret | Example |
+| Secret | Value |
 |---|---|
-| `EC2_HOST` | `108.130.89.241` (or public DNS) |
+| `EC2_HOST` | `108.130.89.241` |
 | `EC2_USER` | `ubuntu` |
-| `EC2_SSH_KEY` | private key PEM |
-| `EC2_SSH_PORT` | `22` (optional) |
-| `EC2_DOMAIN` | `demo.stadepassgn.com` |
-| `EC2_WEB_ROOT` | `/var/www/html/parts_books` |
+| `EC2_SSH_KEY` | PEM private key |
+| `EC2_DOMAIN` | `demo.stadepassgn.com` (optional) |
+| `EC2_WEB_ROOT` | `/var/www/html/parts_books` (optional) |
 
-Push to `main` (or run **CI and deploy**) builds the Vite app, rsyncs to `parts_books`, reloads nginx SPA, and updates the API container on **4100**.
+Push `main` → build + rsync SPA + docker API on **4100**.
