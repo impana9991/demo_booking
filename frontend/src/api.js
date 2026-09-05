@@ -1,10 +1,12 @@
 async function request(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  // Guide: DELETE release-hold has no body — omit content-type.
+  if (options.body != null && options.body !== "") {
+    headers["content-type"] = headers["content-type"] || "application/json";
+  }
   const res = await fetch(path, {
-    headers: {
-      "content-type": "application/json",
-      ...(options.headers || {}),
-    },
     ...options,
+    headers,
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -28,38 +30,29 @@ export const api = {
     return request(`/api/events${qs ? `?${qs}` : ""}`);
   },
   getEvent: (id) => request(`/api/events/${id}`),
-  /** Layout only — zones / sections / seats geometry */
   getMap: (id) => request(`/api/events/${id}/map`),
-  /** Docs: POST /booking-sessions { event_id, access_code } */
+  /** Guide: POST /booking-sessions { event_id, access_code } */
   createSession: (body) =>
     request("/api/booking-sessions", { method: "POST", body: JSON.stringify(body) }),
-  /** Docs: GET /booking-sessions/:id  (overview) or ?section_id= (live seats) */
   getSession: (sessionId, sectionId) => {
     const qs = sectionId ? `?section_id=${encodeURIComponent(sectionId)}` : "";
     return request(`/api/booking-sessions/${sessionId}${qs}`);
   },
   getSeats: (sessionId, sectionId) =>
     request(`/api/booking-sessions/${sessionId}?section_id=${encodeURIComponent(sectionId)}`),
-  /** Docs: POST /booking-sessions/:id/holds */
   createHold: (sessionId, body) =>
     request(`/api/booking-sessions/${sessionId}/holds`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  /** Docs: DELETE /booking-sessions/:id/holds/:holdId */
+  /** Guide: DELETE …/holds/:holdId — no body */
   releaseHold: (sessionId, holdId) =>
     request(`/api/booking-sessions/${sessionId}/holds/${holdId}`, { method: "DELETE" }),
-  /** Docs: GET /booking-sessions/:id/checkout */
   checkout: (sessionId) => request(`/api/booking-sessions/${sessionId}/checkout`),
-  /**
-   * Partner pay then docs: POST /purchases
-   * Expects holds already created (exact guide order).
-   */
   pay: (body) =>
     request("/api/payments/pay", {
       method: "POST",
       body: JSON.stringify({ payment_status: "yes", ...body }),
     }),
-  /** Partner dashboard ticket/order list */
   listTickets: () => request("/api/tickets"),
 };

@@ -1,28 +1,30 @@
 import { randomUUID } from "crypto";
 import { apiPathOnly, signRequest } from "./sign.js";
 import { demoRequest } from "./demo.js";
-import { isRuntimeDemo } from "./runtime.js";
+import { getPartnerCode, isRuntimeDemo } from "./runtime.js";
 
 function env(name, fallback = "") {
   return process.env[name] ?? fallback;
 }
 
-/** Demo unless the UI has switched to Live with a partner secret. */
+/** Demo unless the UI has logged in Live with a partner code. */
 export function isDemoMode() {
   return isRuntimeDemo();
 }
 
 export function partnerMeta() {
   return {
-    partner_code: env("STADEPASS_PARTNER_CODE", "PARTSBOOKING") || null,
+    partner_code: getPartnerCode(),
     partner_id: env("STADEPASS_PARTNER_ID") || null,
     has_default_access_code: Boolean(env("STADEPASS_EVENT_ACCESS_CODE")),
   };
 }
 
 /**
- * Signed call to StadePass Public API.
- * @param {{ method: string, path: string, query?: Record<string,string|number|undefined>, body?: object|null }} opts
+ * StadePass Public API call (latest guide).
+ * Required: x-partner-code on every /api/v1/public/* request.
+ * Optional: HMAC (x-api-key / timestamp / signature) when keys are in .env
+ * (some hosts still expect them).
  */
 export async function stadepassRequest({ method, path, query = {}, body = null }) {
   if (isDemoMode()) {
@@ -30,11 +32,9 @@ export async function stadepassRequest({ method, path, query = {}, body = null }
   }
 
   const base = env("STADEPASS_BASE_URL").replace(/\/$/, "");
-  const apiKey = env("STADEPASS_API_KEY");
-  const secret = env("STADEPASS_API_SECRET");
-
-  if (!base || !apiKey || !secret) {
-    const err = new Error("Missing STADEPASS_BASE_URL / STADEPASS_API_KEY / STADEPASS_API_SECRET");
+  const partnerCode = getPartnerCode();
+  if (!base || !partnerCode) {
+    const err = new Error("Missing STADEPASS_BASE_URL or partner code for Live.");
     err.status = 500;
     throw err;
   }
@@ -45,25 +45,29 @@ export async function stadepassRequest({ method, path, query = {}, body = null }
   }
   const queryString = qs.toString();
   const urlPath = queryString ? `${path}?${queryString}` : path;
-  const signPath = apiPathOnly(path);
 
   const rawBody = body == null ? "" : JSON.stringify(body);
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const signature = signRequest({
-    secret,
-    timestamp,
-    method,
-    path: signPath,
-    body: rawBody,
-  });
-
   const headers = {
-    "x-api-key": apiKey,
-    "x-api-timestamp": timestamp,
-    "x-api-signature": signature,
+    "x-partner-code": partnerCode,
     "x-request-id": randomUUID(),
   };
   if (rawBody) headers["content-type"] = "application/json";
+
+  // Optional HMAC if partner key/secret are configured (Postman env still has these).
+  const apiKey = env("STADEPASS_API_KEY");
+  const secret = env("STADEPASS_API_SECRET");
+  if (apiKey && secret && !apiKey.includes("YOUR_") && !secret.includes("YOUR_")) {
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    headers["x-api-key"] = apiKey;
+    headers["x-api-timestamp"] = timestamp;
+    headers["x-api-signature"] = signRequest({
+      secret,
+      timestamp,
+      method,
+      path: apiPathOnly(path),
+      body: rawBody,
+    });
+  }
 
   let res;
   try {

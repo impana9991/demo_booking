@@ -532,6 +532,36 @@ select {
   color: var(--ink-soft);
 }
 
+.access-code-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.75rem 0 1rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.access-code-field input {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink);
+  background: #fafafa;
+}
+
+.access-code-field input:focus {
+  outline: 2px solid #16a34a;
+  outline-offset: 1px;
+}
+
 .qty {
   display: inline-flex;
   align-items: center;

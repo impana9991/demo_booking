@@ -1,60 +1,58 @@
 /**
  * Runtime Demo / Live switch (in-memory).
- * Default is always demo until the UI opts into live with a partner secret.
+ * Guide: Live uses partner code (x-partner-code) on every Public API call.
+ * Event invite code (access_code) is separate — only for POST /booking-sessions.
  */
 const state = {
   mode: "demo", // "demo" | "live"
-  partnerSecret: null,
+  partnerCode: null,
 };
 
 export function getRuntimeMode() {
   return state.mode;
 }
 
-export function getPartnerSecret() {
-  return state.partnerSecret;
+export function getPartnerCode() {
+  return state.partnerCode || process.env.STADEPASS_PARTNER_CODE || "PARTSBOOKING";
 }
 
 export function isRuntimeDemo() {
   return state.mode !== "live";
 }
 
-export function setRuntimeMode({ mode, partnerSecret }) {
+export function setRuntimeMode({ mode, partnerCode }) {
   const next = String(mode || "").toLowerCase() === "live" ? "live" : "demo";
 
   if (next === "demo") {
     state.mode = "demo";
-    state.partnerSecret = null;
-    return { mode: state.mode, has_secret: false };
+    state.partnerCode = null;
+    return { mode: state.mode, partner_code: null };
   }
 
-  const secret = String(partnerSecret || "").trim();
-  if (!secret) {
-    const err = new Error("Partner secret is required to switch to Live.");
+  const code = String(partnerCode || "").trim().toUpperCase();
+  if (!code) {
+    const err = new Error("Partner code is required to go Live (e.g. PARTSBOOKING).");
     err.status = 400;
     throw err;
   }
 
   const base = process.env.STADEPASS_BASE_URL;
-  const apiKey = process.env.STADEPASS_API_KEY;
-  const apiSecret = process.env.STADEPASS_API_SECRET;
-  if (!base || !apiKey || !apiSecret || apiKey.includes("your_") || apiSecret.includes("your_")) {
-    const err = new Error(
-      "Live mode needs STADEPASS_BASE_URL, STADEPASS_API_KEY, and STADEPASS_API_SECRET in backend/.env."
-    );
+  if (!base) {
+    const err = new Error("Live mode needs STADEPASS_BASE_URL in backend/.env.");
     err.status = 400;
     throw err;
   }
 
   state.mode = "live";
-  state.partnerSecret = secret;
-  return { mode: state.mode, has_secret: true };
+  state.partnerCode = code;
+  return { mode: state.mode, partner_code: state.partnerCode };
 }
 
 export function runtimePublic() {
   return {
     mode: state.mode,
     demo: state.mode !== "live",
-    has_secret: Boolean(state.partnerSecret),
+    partner_code: state.mode === "live" ? state.partnerCode : null,
+    has_event_access_code: Boolean(process.env.STADEPASS_EVENT_ACCESS_CODE),
   };
 }

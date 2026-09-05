@@ -108,16 +108,28 @@ export default function StadiumVenue({
 
   const sectionSeats = useMemo(() => {
     if (!activeSectionId) return [];
+    const liveEntries = Object.entries(seatStatusById || {});
+    const hasLive = liveEntries.length > 0;
     return seats
       .filter((s) => String(s.section_id) === String(activeSectionId))
       .map((s) => {
-        const id = String(s.seat_id || s.id);
-        const live = seatStatusById?.[id];
+        const geoId = String(s.seat_id || s.id);
+        let liveId = geoId;
+        let live = seatStatusById?.[geoId];
+        if (!live && s.seat_code) {
+          const match = liveEntries.find(([, v]) => v.seat_code && String(v.seat_code) === String(s.seat_code));
+          if (match) {
+            liveId = match[0];
+            live = match[1];
+          }
+        }
+        // After live availability loads, geometry-only seats are not bookable.
+        const status = live?.status || (hasLive ? "sold" : s.status || "available");
         return {
           ...s,
-          id,
-          seat_id: id,
-          status: live?.status || s.status || "available",
+          id: liveId,
+          seat_id: liveId,
+          status,
           price: live?.price ?? s.price,
           seat_code: live?.seat_code || s.seat_code,
         };

@@ -29,11 +29,12 @@ app.get("/api/mode", (_req, res) => {
 
 app.post("/api/mode", async (req, res, next) => {
   try {
-    const { mode, partner_secret } = req.body || {};
-    const result = setRuntimeMode({ mode, partnerSecret: partner_secret });
+    const { mode, partner_code } = req.body || {};
+    const result = setRuntimeMode({ mode, partnerCode: partner_code });
 
     if (result.mode === "live") {
       try {
+        // Guide: GET /events with x-partner-code → invited events only.
         await stadepassRequest({
           method: "GET",
           path: "/api/v1/public/events",
@@ -41,7 +42,16 @@ app.post("/api/mode", async (req, res, next) => {
         });
       } catch (e) {
         setRuntimeMode({ mode: "demo" });
-        const err = new Error(e.message || "Could not reach StadePass Core. Staying in Demo.");
+        const core = process.env.STADEPASS_BASE_URL || "Core";
+        const code = String(partner_code || "").trim().toUpperCase() || "(empty)";
+        const baseMsg = e.message || "Could not reach StadePass Core.";
+        const hint =
+          /invalid partner code/i.test(baseMsg)
+            ? ` Partner code "${code}" is not registered on ${core}. Create/invite that partner in StadePass admin, then retry.`
+            : /missing public api credentials|authentication failed/i.test(baseMsg)
+              ? ` Check STADEPASS_API_KEY / STADEPASS_API_SECRET in backend/.env for ${core}.`
+              : "";
+        const err = new Error(`${baseMsg}${hint} Staying in Demo.`);
         err.status = e.status || 503;
         throw err;
       }
@@ -70,6 +80,6 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, () => {
   console.log(`Demo Booking API on http://localhost:${PORT}`);
-  console.log(`Default mode: DEMO (toggle Live in the UI with partner secret)`);
+  console.log(`Default mode: DEMO (Live = partner code; open seats = event access_code)`);
   console.log(`Core: ${process.env.STADEPASS_BASE_URL || "(unset)"}`);
 });

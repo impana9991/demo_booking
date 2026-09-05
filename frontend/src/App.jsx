@@ -60,6 +60,7 @@ const VIEWS = {
 
 const FLOW = ["Events", "Details", "Seats", "Pay", "Done"];
 const TICKETS_KEY = "demo-booking-tickets";
+const LIVE_PARTNER_KEY = "demo-booking-live-partner";
 
 function loadLocalOrders() {
   try {
@@ -102,7 +103,8 @@ export default function App() {
   const [mode, setMode] = useState("demo");
   const [modeBusy, setModeBusy] = useState(false);
   const [showLiveForm, setShowLiveForm] = useState(false);
-  const [partnerSecret, setPartnerSecret] = useState("");
+  const [partnerCode, setPartnerCode] = useState("");
+  const [eventAccessCode, setEventAccessCode] = useState("");
   const [openingMap, setOpeningMap] = useState(false);
   const [orders, setOrders] = useState(() => loadLocalOrders());
   /** Full seat geometry kept out of React state (Live maps are ~20k seats). */
@@ -111,14 +113,40 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const m = await api.getMode();
-        setMode(m.mode || (m.demo ? "demo" : "live"));
+        const savedPartner = sessionStorage.getItem(LIVE_PARTNER_KEY) || "";
+        if (savedPartner) {
+          try {
+            const live = await api.setMode({ mode: "live", partner_code: savedPartner });
+            setMode(live.mode || "live");
+            setPartnerCode(savedPartner);
+          } catch {
+            sessionStorage.removeItem(LIVE_PARTNER_KEY);
+            setMode("demo");
+          }
+        } else {
+          const m = await api.getMode();
+          setMode(m.mode || (m.demo ? "demo" : "live"));
+        }
       } catch {
         setMode("demo");
       }
       loadEvents();
     })();
   }, []);
+
+  function syncModeFromResponse(res) {
+    if (typeof res?.demo === "boolean") {
+      const next = res.demo ? "demo" : "live";
+      setMode((prev) => {
+        if (prev === "live" && next === "demo") {
+          sessionStorage.removeItem(LIVE_PARTNER_KEY);
+          setError("Live session expired on the server. Click Live and enter PARTSBOOKING again.");
+          clearBookingState();
+        }
+        return next;
+      });
+    }
+  }
 
   function clearBookingState() {
     setEvent(null);
@@ -140,7 +168,8 @@ export default function App() {
     setModeBusy(true);
     setError("");
     setShowLiveForm(false);
-    setPartnerSecret("");
+    setPartnerCode("");
+    sessionStorage.removeItem(LIVE_PARTNER_KEY);
     setQuery("");
     setCategory("");
     try {
@@ -157,9 +186,9 @@ export default function App() {
 
   async function switchToLive(e) {
     e?.preventDefault?.();
-    const secret = partnerSecret.trim();
-    if (!secret) {
-      setError("Enter your partner secret to go Live.");
+    const code = partnerCode.trim();
+    if (!code) {
+      setError("Enter your partner code to go Live (e.g. PARTSBOOKING).");
       return;
     }
     setModeBusy(true);
@@ -167,13 +196,15 @@ export default function App() {
     setQuery("");
     setCategory("");
     try {
-      const res = await api.setMode({ mode: "live", partner_secret: secret });
+      // Guide: login with partner code → list invited events via x-partner-code.
+      const res = await api.setMode({ mode: "live", partner_code: code });
       setMode(res.mode || "live");
+      sessionStorage.setItem(LIVE_PARTNER_KEY, code.toUpperCase());
       setShowLiveForm(false);
-      setPartnerSecret("");
       clearBookingState();
       await loadEvents("", "");
     } catch (err) {
+      sessionStorage.removeItem(LIVE_PARTNER_KEY);
       setError(err.message || "Could not switch to Live.");
       setMode("demo");
       await loadEvents("", "");
@@ -190,9 +221,7 @@ export default function App() {
         q: nextQuery || undefined,
         category: nextCategory || undefined,
       });
-      if (typeof res.demo === "boolean") {
-        setMode(res.demo ? "demo" : "live");
-      }
+      syncModeFromResponse(res);
       const list = res.data?.events ?? res.events ?? [];
       setEvents(Array.isArray(list) ? list : []);
     } catch (e) {
@@ -244,20 +273,43 @@ export default function App() {
 
   async function openMap() {
     if (!event || openingMap) return;
+    const code = eventAccessCode.trim();
+    // Don't send placeholder text as the invite code
+    if (code && /access_code from invite|demo-access \(or blank\)/i.test(code)) {
+      setError("Enter the real event invite code P84AXAQ4LQDL (or leave the field blank).");
+      return;
+    }
     setOpeningMap(true);
     setError("");
     try {
       let sess = session;
       if (!sess?.session_id) {
+        // Guide: POST /booking-sessions { event_id, access_code }. Map geometry already loaded via GET /map.
         const sessionRes = await api.createSession({
           event_id: event.id,
+          access_code: code || undefined,
           owner_ref: "demo-booking-user",
         });
         sess = sessionRes?.data || sessionRes;
         if (!sess?.session_id) {
           throw new Error("Booking session created but session_id missing.");
         }
-        setSession(sess);
+        // Keep session metadata only — do not replace 20k-seat map from session payload.
+        setSession({
+          session_id: sess.session_id,
+          event_id: sess.event_id || event.id,
+          owner_ref: sess.owner_ref,
+          status: sess.status,
+          expires_at: sess.expires_at,
+        });
+        if (sess.map?.zones?.length && !(map?.zones?.length)) {
+          setMap({
+            event_id: sess.event_id || event.id,
+            zones: sess.map.zones,
+            sections: sess.map.sections || [],
+            seats: [],
+          });
+        }
       }
       setMapStep("zones");
       setZoneId("");
@@ -285,6 +337,7 @@ export default function App() {
   async function loadSectionSeats(sessionId, secId, heldSeats = selected) {
     // Docs: GET /booking-sessions/:id?section_id=
     const seatsRes = await api.getSeats(sessionId, secId);
+    syncModeFromResponse(seatsRes);
     const liveSeats = seatsRes.data?.availability?.seats || [];
     const next = {};
     for (const s of liveSeats) {
@@ -309,6 +362,19 @@ export default function App() {
     return liveSeats;
   }
 
+  function resolveHoldSeatId(seat) {
+    const raw = String(seat.seat_id || seat.id || "");
+    if (raw && seatStatusById[raw]) return raw;
+    const code = seat.seat_code;
+    if (code) {
+      const match = Object.entries(seatStatusById).find(
+        ([, v]) => v.seat_code && String(v.seat_code) === String(code)
+      );
+      if (match) return match[0];
+    }
+    return raw;
+  }
+
   async function pickSection(section) {
     if (!session?.session_id) {
       setError("Create a booking session first.");
@@ -320,13 +386,40 @@ export default function App() {
     setMapStep("seats");
     setSeatsLoading(true);
     setError("");
-    // Attach only this section's seat geometry (not the whole stadium)
-    const geo = allSeatsRef.current.filter((s) => String(s.section_id) === secId);
-    setMap((prev) => (prev ? { ...prev, seats: geo } : prev));
     try {
-      await loadSectionSeats(session.session_id, secId);
+      const liveSeats = await loadSectionSeats(session.session_id, secId);
+      const geo = allSeatsRef.current.filter((s) => String(s.section_id) === secId);
+      const liveById = new Map(liveSeats.map((s) => [String(s.seat_id || s.id), s]));
+      const liveByCode = new Map(
+        liveSeats.filter((s) => s.seat_code).map((s) => [String(s.seat_code), s])
+      );
+      const overlap = geo.filter((g) => liveById.has(String(g.seat_id || g.id))).length;
+      // Remap geometry → holdable live seat ids (Core map/availability id mismatch).
+      const remapped = geo.map((g) => {
+        const geoId = String(g.seat_id || g.id);
+        let live = liveById.get(geoId);
+        if (!live && g.seat_code) live = liveByCode.get(String(g.seat_code));
+        if (!live && overlap === 0 && liveSeats.length === geo.length) {
+          // Last resort: same count, no id overlap — keep geo for paint; hold blocked until codes exist.
+          return { ...g, id: geoId, seat_id: geoId };
+        }
+        if (!live) {
+          return { ...g, id: geoId, seat_id: geoId, status: "sold" };
+        }
+        const liveId = String(live.seat_id || live.id);
+        return {
+          ...g,
+          id: liveId,
+          seat_id: liveId,
+          seat_code: live.seat_code || g.seat_code,
+          status: live.status || g.status || "available",
+          price: live.price ?? g.price,
+        };
+      });
+      setMap((prev) => (prev ? { ...prev, seats: remapped } : prev));
     } catch (e) {
       setError(e.message);
+      setMap((prev) => (prev ? { ...prev, seats: [] } : prev));
     } finally {
       setSeatsLoading(false);
     }
@@ -334,7 +427,15 @@ export default function App() {
 
   async function toggleSeat(seat) {
     if (!session?.session_id || holdBusy) return;
-    const seatId = String(seat.seat_id);
+    const seatId = resolveHoldSeatId(seat);
+    if (!seatId || seatId === "undefined") {
+      setError("Seat id missing — reload the section and try again.");
+      return;
+    }
+    if (Object.keys(seatStatusById).length && !seatStatusById[seatId]) {
+      setError("That seat is not in live availability. Pick a green free seat.");
+      return;
+    }
     const existing = selected.find((s) => s.seat_id === seatId);
 
     if (existing) {
@@ -342,7 +443,8 @@ export default function App() {
       setError("");
       try {
         if (existing.hold_id) {
-          await api.releaseHold(session.session_id, existing.hold_id);
+          const rel = await api.releaseHold(session.session_id, existing.hold_id);
+          syncModeFromResponse(rel);
         }
         const nextHeld = selected.filter((s) => s.seat_id !== seatId);
         setSelected(nextHeld);
@@ -370,6 +472,7 @@ export default function App() {
         seat_id: seatId,
         idempotency_key: `demo-booking:${session.session_id}:${seatId}`,
       });
+      syncModeFromResponse(holdRes);
       const hold = holdRes.data?.hold || holdRes.hold;
       if (!hold?.id) throw new Error("Hold response missing hold.id");
       const row = {
@@ -635,17 +738,17 @@ export default function App() {
 
       {showLiveForm && mode !== "live" && (
         <form className="live-secret-bar" onSubmit={switchToLive}>
-          <label htmlFor="partner-secret">Event invite secret</label>
+          <label htmlFor="partner-code">Partner code</label>
           <input
-            id="partner-secret"
-            type="password"
+            id="partner-code"
+            type="text"
             autoComplete="off"
-            placeholder="Event access_code (not spk_/sps_)"
-            value={partnerSecret}
-            onChange={(e) => setPartnerSecret(e.target.value)}
+            placeholder="e.g. PARTSBOOKING"
+            value={partnerCode}
+            onChange={(e) => setPartnerCode(e.target.value)}
             disabled={modeBusy}
           />
-          <button type="submit" className="primary" disabled={modeBusy || !partnerSecret.trim()}>
+          <button type="submit" className="primary" disabled={modeBusy || !partnerCode.trim()}>
             {modeBusy ? "Connecting…" : "Go Live"}
           </button>
           <button
@@ -654,7 +757,7 @@ export default function App() {
             disabled={modeBusy}
             onClick={() => {
               setShowLiveForm(false);
-              setPartnerSecret("");
+              setPartnerCode("");
             }}
           >
             Cancel
@@ -795,9 +898,24 @@ export default function App() {
                     </button>
                   </div>
                   <p className="pb-muted small">Choose your stand and seats on the stadium map.</p>
+                  <label className="access-code-field" htmlFor="event-access-code">
+                    Event invite code
+                    <input
+                      id="event-access-code"
+                      type="text"
+                      autoComplete="off"
+                      placeholder="P84AXAQ4LQDL (or leave blank)"
+                      value={eventAccessCode}
+                      onChange={(e) => setEventAccessCode(e.target.value)}
+                      disabled={openingMap || loading}
+                    />
+                  </label>
                   <button type="button" className="primary wide" disabled={openingMap || loading} onClick={openMap}>
-                    {openingMap ? "Opening…" : "Select seats"}
+                    {openingMap ? "Opening session…" : "Select seats"}
                   </button>
+                  {openingMap && (
+                    <p className="pb-muted small">Talking to Core — first open can take up to a minute.</p>
+                  )}
                 </div>
                 <div className="mini-map preview">
                   <p className="mini-title">Stadium</p>
