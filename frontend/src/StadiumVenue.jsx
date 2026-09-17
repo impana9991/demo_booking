@@ -9,6 +9,44 @@ function zonePrice(z) {
   return z?.sales_price_num ?? z?.price ?? null;
 }
 
+/** Core may put counts on map.zones or availability.zones — don't force 0. */
+function zoneSeatCount(z) {
+  const raw = z?.sales_available_seats ?? z?.remaining ?? z?.available_seats ?? z?.available;
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function mergeZoneAvailability(mapZones = [], availabilityZones = [], availabilitySections = []) {
+  const byId = Object.fromEntries(
+    (availabilityZones || []).map((z) => [String(z.id), z])
+  );
+  const remainingByZone = {};
+  for (const s of availabilitySections || []) {
+    const zid = String(s.zone_id ?? "");
+    if (!zid) continue;
+    const rem = Number(s.remaining);
+    if (!Number.isFinite(rem)) continue;
+    remainingByZone[zid] = (remainingByZone[zid] || 0) + rem;
+  }
+  return (mapZones || []).map((z) => {
+    const avail = byId[String(z.id)] || {};
+    const fromSections = remainingByZone[String(z.id)];
+    const count =
+      avail.remaining ??
+      z.sales_available_seats ??
+      avail.sales_available_seats ??
+      fromSections ??
+      z.remaining ??
+      null;
+    return {
+      ...z,
+      sales_available_seats: count,
+      remaining: avail.remaining ?? fromSections ?? z.remaining ?? count,
+    };
+  });
+}
+
 function polar(r, deg) {
   const rad = (deg * Math.PI) / 180;
   return [r * Math.cos(rad), r * Math.sin(rad)];
@@ -324,4 +362,4 @@ export function SectionList({ sections, activeSectionId, onSelectSection, prices
   );
 }
 
-export { formatGnf, zonePrice };
+export { formatGnf, zonePrice, zoneSeatCount, mergeZoneAvailability };

@@ -3,14 +3,18 @@ import { isDemoMode, stadepassRequest } from "../stadepass/client.js";
 
 const router = Router();
 
+const MAX_SESSION_MAP_SEATS = 2500;
+
 /**
- * Core may embed a huge seats[] in session.map — keep zones/sections for the UI,
- * omit seat geometry (section seats come from GET ?section_id=).
+ * Opening a session can embed the whole stadium (~20k seats).
+ * Keep zones/sections; drop huge map.seats on create only.
+ * Never strip when loading a section — those seats are what the UI needs.
  */
-function slimSessionPayload(payload) {
+function slimCreateSessionPayload(payload) {
   if (!payload || typeof payload !== "object") return payload;
   const data = payload.data;
-  if (!data?.map || !Array.isArray(data.map.seats) || data.map.seats.length === 0) {
+  const seats = data?.map?.seats;
+  if (!Array.isArray(seats) || seats.length === 0 || seats.length <= MAX_SESSION_MAP_SEATS) {
     return payload;
   }
   return {
@@ -19,10 +23,53 @@ function slimSessionPayload(payload) {
       ...data,
       map: {
         ...data.map,
-        seats_count: data.map.seats.length,
+        seats_count: seats.length,
         seats_omitted: true,
         seats: [],
       },
+    },
+  };
+}
+
+/** Prefer availability.seats; if Core only filled map.seats for the section, expose them. */
+function normalizeSectionPayload(payload, sectionId) {
+  if (!payload || typeof payload !== "object") return payload;
+  const data = payload.data;
+  if (!data) return payload;
+
+  let seats =
+    data.availability?.seats ||
+    data.seats ||
+    data.availability?.section?.seats ||
+    [];
+
+  if ((!Array.isArray(seats) || seats.length === 0) && Array.isArray(data.map?.seats)) {
+    seats = sectionId
+      ? data.map.seats.filter((s) => String(s.section_id) === String(sectionId))
+      : data.map.seats;
+  }
+
+  if (!Array.isArray(seats)) seats = [];
+
+  return {
+    ...payload,
+    data: {
+      ...data,
+      availability: {
+        ...(data.availability || {}),
+        scope: data.availability?.scope || "section",
+        section_id: String(sectionId || data.availability?.section_id || ""),
+        seats,
+      },
+      // Keep map.seats for this section so geometry is available to the UI.
+      map: data.map
+        ? {
+            ...data.map,
+            seats: sectionId
+              ? (data.map.seats || []).filter((s) => String(s.section_id) === String(sectionId))
+              : data.map.seats || seats,
+          }
+        : data.map,
     },
   };
 }
@@ -53,7 +100,7 @@ router.post("/", async (req, res, next) => {
           access_code: String(code),
         },
       });
-      res.status(201).json({ demo: isDemoMode(), ...slimSessionPayload(data) });
+      res.status(201).json({ demo: isDemoMode(), ...slimCreateSessionPayload(data) });
     } catch (e) {
       const msg = String(e.message || "");
       if (e.status === 401 || e.status === 403 || /ACCESS_DENIED|event secret|access_code|Invalid access/i.test(msg)) {
@@ -71,15 +118,17 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-/** Guide step 3: GET /booking-sessions/:id?section_id= */
+/** Guide step 3: GET /booking-sessions/:id?section_id= — keep seats (do not clear to []). */
 router.get("/:sessionId", async (req, res, next) => {
   try {
+    const sectionId = req.query.section_id;
     const data = await stadepassRequest({
       method: "GET",
       path: `/api/v1/public/booking-sessions/${req.params.sessionId}`,
-      query: { section_id: req.query.section_id },
+      query: { section_id: sectionId },
     });
-    res.json({ demo: isDemoMode(), ...slimSessionPayload(data) });
+    const out = sectionId ? normalizeSectionPayload(data, sectionId) : data;
+    res.json({ demo: isDemoMode(), ...out });
   } catch (e) {
     next(e);
   }

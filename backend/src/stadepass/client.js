@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { apiPathOnly, signRequest } from "./sign.js";
 import { demoRequest } from "./demo.js";
 import { getPartnerCode, isRuntimeDemo } from "./runtime.js";
+import { STADEPASS_PUBLIC_BASE_URL } from "./config.js";
 
 function env(name, fallback = "") {
   return process.env[name] ?? fallback;
@@ -17,32 +18,25 @@ export function partnerMeta() {
     partner_code: getPartnerCode(),
     partner_id: env("STADEPASS_PARTNER_ID") || null,
     has_default_access_code: Boolean(env("STADEPASS_EVENT_ACCESS_CODE")),
+    base_url: STADEPASS_PUBLIC_BASE_URL,
   };
 }
 
 /**
  * StadePass Public API call (latest guide).
+ * Always uses https://book.stadepassgn.com — never local Core.
  * Required: x-partner-code on every /api/v1/public/* request.
  * Optional: HMAC (x-api-key / timestamp / signature) when keys are in .env
- * (some hosts still expect them).
  */
 export async function stadepassRequest({ method, path, query = {}, body = null }) {
   if (isDemoMode()) {
     return demoRequest({ method, path, query, body });
   }
 
-  const base = env("STADEPASS_BASE_URL").replace(/\/$/, "");
+  const base = STADEPASS_PUBLIC_BASE_URL;
   const partnerCode = getPartnerCode();
-  if (!base || !partnerCode) {
-    const err = new Error("Missing STADEPASS_BASE_URL or partner code for Live.");
-    err.status = 500;
-    throw err;
-  }
-  // Public partner API only — block accidental local Core (localhost / 127.0.0.1).
-  if (/localhost|127\.0\.0\.1/i.test(base)) {
-    const err = new Error(
-      `STADEPASS_BASE_URL must be https://book.stadepassgn.com (got ${base}).`
-    );
+  if (!partnerCode) {
+    const err = new Error("Missing partner code for Live.");
     err.status = 500;
     throw err;
   }
@@ -86,7 +80,7 @@ export async function stadepassRequest({ method, path, query = {}, body = null }
     });
   } catch (e) {
     const err = new Error(
-      `Cannot reach StadePass at ${base} (${e.message}). Check STADEPASS_BASE_URL or stay in Demo.`
+      `Cannot reach StadePass at ${base} (${e.message}). Check network or stay in Demo.`
     );
     err.status = 503;
     throw err;

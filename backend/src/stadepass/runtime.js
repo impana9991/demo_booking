@@ -2,7 +2,10 @@
  * Runtime Demo / Live switch (in-memory).
  * Guide: Live uses partner code (x-partner-code) on every Public API call.
  * Event invite code (access_code) is separate — only for POST /booking-sessions.
+ * Live Core host is always https://book.stadepassgn.com
  */
+import { STADEPASS_PUBLIC_BASE_URL } from "./config.js";
+
 const state = {
   mode: "demo", // "demo" | "live"
   partnerCode: null,
@@ -26,7 +29,7 @@ export function setRuntimeMode({ mode, partnerCode }) {
   if (next === "demo") {
     state.mode = "demo";
     state.partnerCode = null;
-    return { mode: state.mode, partner_code: null };
+    return { mode: state.mode, partner_code: null, base_url: STADEPASS_PUBLIC_BASE_URL };
   }
 
   const code = String(partnerCode || "").trim().toUpperCase();
@@ -36,23 +39,13 @@ export function setRuntimeMode({ mode, partnerCode }) {
     throw err;
   }
 
-  const base = process.env.STADEPASS_BASE_URL;
-  if (!base) {
-    const err = new Error("Live mode needs STADEPASS_BASE_URL in backend/.env.");
-    err.status = 400;
-    throw err;
-  }
-  if (/localhost|127\.0\.0\.1/i.test(base)) {
-    const err = new Error(
-      "Live mode must use https://book.stadepassgn.com — not a local Core URL."
-    );
-    err.status = 400;
-    throw err;
-  }
-
   state.mode = "live";
   state.partnerCode = code;
-  return { mode: state.mode, partner_code: state.partnerCode };
+  return {
+    mode: state.mode,
+    partner_code: state.partnerCode,
+    base_url: STADEPASS_PUBLIC_BASE_URL,
+  };
 }
 
 export function runtimePublic() {
@@ -61,5 +54,6 @@ export function runtimePublic() {
     demo: state.mode !== "live",
     partner_code: state.mode === "live" ? state.partnerCode : null,
     has_event_access_code: Boolean(process.env.STADEPASS_EVENT_ACCESS_CODE),
+    base_url: STADEPASS_PUBLIC_BASE_URL,
   };
 }
