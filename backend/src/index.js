@@ -7,6 +7,7 @@ import paymentsRouter from "./routes/payments.js";
 import ticketsRouter from "./routes/tickets.js";
 import { isDemoMode, stadepassRequest } from "./stadepass/client.js";
 import { runtimePublic, setRuntimeMode } from "./stadepass/runtime.js";
+import { STADEPASS_PUBLIC_BASE_URL } from "./stadepass/config.js";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -19,7 +20,7 @@ app.get("/api/health", async (_req, res) => {
   res.json({
     ok: true,
     ...runtimePublic(),
-    core: { reachable: true, mode: demo ? "demo" : "live" },
+    core: { reachable: true, mode: demo ? "demo" : "live", base_url: STADEPASS_PUBLIC_BASE_URL },
   });
 });
 
@@ -42,7 +43,7 @@ app.post("/api/mode", async (req, res, next) => {
         });
       } catch (e) {
         setRuntimeMode({ mode: "demo" });
-        const core = process.env.STADEPASS_BASE_URL || "Core";
+        const core = STADEPASS_PUBLIC_BASE_URL;
         const code = String(partner_code || "").trim().toUpperCase() || "(empty)";
         const baseMsg = e.message || "Could not reach StadePass Core.";
         const hint =
@@ -81,5 +82,5 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`Demo Booking API on http://localhost:${PORT}`);
   console.log(`Default mode: DEMO (Live = partner code; open seats = event access_code)`);
-  console.log(`Core: ${process.env.STADEPASS_BASE_URL || "(unset)"}`);
+  console.log(`Core: ${STADEPASS_PUBLIC_BASE_URL}`);
 });

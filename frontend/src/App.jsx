@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import StadiumVenue, { SectionList, formatGnf as formatGnfVenue, zonePrice } from "./StadiumVenue";
+import StadiumVenue, {
+  SectionList,
+  formatGnf as formatGnfVenue,
+  zonePrice,
+  zoneSeatCount,
+  mergeZoneAvailability,
+} from "./StadiumVenue";
 
 function formatGnf(amount) {
   return formatGnfVenue(amount);
@@ -346,7 +352,12 @@ export default function App() {
         const priced = eventPriceZones(sess.event || event, mapData.zones || []);
         const byCode = Object.fromEntries(priced.map((z) => [z.code, z.price]));
         const byName = Object.fromEntries(priced.map((z) => [z.name, z.price]));
-        const enrichedZones = (mapData.zones || []).map((z) => ({
+        const withCounts = mergeZoneAvailability(
+          mapData.zones || [],
+          sess.availability?.zones || [],
+          sess.availability?.sections || []
+        );
+        const enrichedZones = withCounts.map((z) => ({
           ...z,
           price: byCode[z.code] ?? byName[z.name] ?? z.price ?? z.sales_price_num ?? null,
           sales_price_num: z.sales_price_num ?? byCode[z.code] ?? byName[z.name] ?? null,
@@ -359,6 +370,7 @@ export default function App() {
           zones: enrichedZones,
           sections: mapData.sections || [],
           seats: [],
+          availability: sess.availability || null,
         });
       }
       setMapStep("zones");
@@ -390,11 +402,19 @@ export default function App() {
     const data = seatsRes.data || seatsRes;
     const liveSeats =
       data.availability?.seats ||
+      data.map?.seats ||
       data.seats ||
       data.availability?.section?.seats ||
       [];
+    // If Core returned full map seats, keep only this section.
+    const scoped = liveSeats.filter((s) => {
+      if (!secId) return true;
+      if (s.section_id == null) return true;
+      return String(s.section_id) === String(secId);
+    });
+    const list = scoped.length ? scoped : liveSeats;
     const next = {};
-    for (const s of liveSeats) {
+    for (const s of list) {
       const id = String(s.seat_id || s.id);
       if (!id || id === "undefined") continue;
       next[id] = {
@@ -414,7 +434,7 @@ export default function App() {
       }
     }
     setSeatStatusById(next);
-    return liveSeats;
+    return list;
   }
 
   function resolveHoldSeatId(seat) {
@@ -1098,7 +1118,12 @@ export default function App() {
                             <span>
                               <strong>{z.name}</strong>
                               <em>
-                                {formatGnf(zonePrice(z))} · {(z.sales_available_seats || 0).toLocaleString()} seats
+                                {formatGnf(zonePrice(z))}
+                                {(() => {
+                                  const n = zoneSeatCount(z);
+                                  if (n == null) return " · open section for seats";
+                                  return ` · ${n.toLocaleString()} seats`;
+                                })()}
                               </em>
                             </span>
                           </button>
@@ -1324,7 +1349,12 @@ export default function App() {
 
       <footer className="pb-footer">
         <span>© Demo Booking</span>
-        <span>Stadium tickets</span>
+        <span>
+          Inventory via{" "}
+          <a href="https://book.stadepassgn.com/" target="_blank" rel="noreferrer">
+            book.stadepassgn.com
+          </a>
+        </span>
       </footer>
     </div>
   );
