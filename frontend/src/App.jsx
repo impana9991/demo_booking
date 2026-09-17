@@ -6,6 +6,69 @@ function formatGnf(amount) {
   return formatGnfVenue(amount);
 }
 
+/** Place seats in the section ring when Core/availability has no position_x/y. */
+function layoutSectionSeats(section, liveSeats) {
+  if (!Array.isArray(liveSeats) || !liveSeats.length) return [];
+
+  const withGeo = liveSeats.every(
+    (s) => Number.isFinite(Number(s.position_x)) && Number.isFinite(Number(s.position_y))
+  );
+  if (withGeo) {
+    return liveSeats.map((s) => ({
+      ...s,
+      id: String(s.seat_id || s.id),
+      seat_id: String(s.seat_id || s.id),
+      section_id: String(s.section_id || section?.id || ""),
+    }));
+  }
+
+  const cols = Math.max(8, Math.ceil(Math.sqrt(liveSeats.length * 1.6)));
+  const rows = Math.max(1, Math.ceil(liveSeats.length / cols));
+  const start = Number(section?.start_angle);
+  const endRaw = Number(section?.end_angle);
+  const hasArc =
+    Number.isFinite(start) &&
+    Number.isFinite(endRaw) &&
+    Number.isFinite(Number(section?.inner_radius)) &&
+    Number.isFinite(Number(section?.outer_radius));
+
+  let sweepEnd = endRaw;
+  if (hasArc && sweepEnd < start) sweepEnd += 360;
+  const inner = hasArc ? Number(section.inner_radius) + 30 : 0;
+  const outer = hasArc ? Number(section.outer_radius) - 20 : 0;
+
+  return liveSeats.map((s, i) => {
+    const row = Math.floor(i / cols);
+    const col = i % cols;
+    const id = String(s.seat_id || s.id);
+    let position_x;
+    let position_y;
+    if (hasArc) {
+      const t = (col + 0.5) / cols;
+      const deg = start + t * (sweepEnd - start);
+      const r = inner + ((row + 0.5) / rows) * Math.max(80, outer - inner);
+      const rad = (deg * Math.PI) / 180;
+      position_x = r * Math.cos(rad);
+      position_y = r * Math.sin(rad);
+    } else {
+      position_x = (col - (cols - 1) / 2) * 56;
+      position_y = (row - (rows - 1) / 2) * 56;
+    }
+    return {
+      ...s,
+      id,
+      seat_id: id,
+      seat_code: s.seat_code || id,
+      section_id: String(s.section_id || section?.id || ""),
+      zone_id: s.zone_id != null ? String(s.zone_id) : section?.zone_id != null ? String(section.zone_id) : undefined,
+      status: s.status || "available",
+      price: s.price,
+      position_x,
+      position_y,
+    };
+  });
+}
+
 function eventMinPrice(ev) {
   return ev?.min_price ?? ev?.pricing?.min_price ?? null;
 }
@@ -233,42 +296,19 @@ export default function App() {
   }
 
   async function openDetail(ev) {
-    setLoading(true);
+    // Guide: only GET /events for the list — no GET /events/:id or /map.
+    // Stadium map arrives later from POST /booking-sessions.
     setError("");
     setSelected([]);
     setResult(null);
     setSession(null);
+    setMap(null);
+    allSeatsRef.current = [];
     setMapStep("zones");
     setSectionId("");
-    try {
-      const [detail, mapRes] = await Promise.all([api.getEvent(ev.id), api.getMap(ev.id)]);
-      const detailData = detail.data || detail;
-      const mapData = mapRes.data || mapRes;
-      const priced = eventPriceZones(detailData);
-      const byCode = Object.fromEntries(priced.map((z) => [z.code, z.price]));
-      const byName = Object.fromEntries(priced.map((z) => [z.name, z.price]));
-      const enrichedZones = (mapData.zones || []).map((z) => ({
-        ...z,
-        price: byCode[z.code] ?? byName[z.name] ?? z.price ?? z.sales_price_num ?? null,
-        sales_price_num: z.sales_price_num ?? byCode[z.code] ?? byName[z.name] ?? null,
-      }));
-      // Keep heavy seat list in a ref — putting ~20k seats in state freezes the UI
-      allSeatsRef.current = mapData.seats || [];
-      setEvent(detailData);
-      setMap({
-        event_id: mapData.event_id,
-        stadium: mapData.stadium,
-        zones: enrichedZones,
-        sections: mapData.sections || [],
-        seats: [],
-      });
-      setZoneId("");
-      setView(VIEWS.detail);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+    setZoneId("");
+    setEvent(ev);
+    setView(VIEWS.detail);
   }
 
   async function openMap() {
@@ -276,7 +316,7 @@ export default function App() {
     const code = eventAccessCode.trim();
     // Don't send placeholder text as the invite code
     if (code && /access_code from invite|demo-access \(or blank\)/i.test(code)) {
-      setError("Enter the real event invite code P84AXAQ4LQDL (or leave the field blank).");
+      setError("Enter the real event invite code (or leave blank in Demo).");
       return;
     }
     setOpeningMap(true);
@@ -284,32 +324,42 @@ export default function App() {
     try {
       let sess = session;
       if (!sess?.session_id) {
-        // Guide: POST /booking-sessions { event_id, access_code }. Map geometry already loaded via GET /map.
+        // Guide step 2: POST /booking-sessions { event_id, access_code } → map in reply
         const sessionRes = await api.createSession({
           event_id: event.id,
           access_code: code || undefined,
-          owner_ref: "demo-booking-user",
         });
         sess = sessionRes?.data || sessionRes;
         if (!sess?.session_id) {
           throw new Error("Booking session created but session_id missing.");
         }
-        // Keep session metadata only — do not replace 20k-seat map from session payload.
         setSession({
           session_id: sess.session_id,
           event_id: sess.event_id || event.id,
-          owner_ref: sess.owner_ref,
           status: sess.status,
           expires_at: sess.expires_at,
         });
-        if (sess.map?.zones?.length && !(map?.zones?.length)) {
-          setMap({
-            event_id: sess.event_id || event.id,
-            zones: sess.map.zones,
-            sections: sess.map.sections || [],
-            seats: [],
-          });
+        if (sess.event) {
+          setEvent((prev) => ({ ...(prev || {}), ...sess.event }));
         }
+        const mapData = sess.map || {};
+        const priced = eventPriceZones(sess.event || event, mapData.zones || []);
+        const byCode = Object.fromEntries(priced.map((z) => [z.code, z.price]));
+        const byName = Object.fromEntries(priced.map((z) => [z.name, z.price]));
+        const enrichedZones = (mapData.zones || []).map((z) => ({
+          ...z,
+          price: byCode[z.code] ?? byName[z.name] ?? z.price ?? z.sales_price_num ?? null,
+          sales_price_num: z.sales_price_num ?? byCode[z.code] ?? byName[z.name] ?? null,
+        }));
+        // Heavy seats stay out of React state (guide may return many); section seats via GET ?section_id=
+        allSeatsRef.current = mapData.seats || [];
+        setMap({
+          event_id: mapData.event_id || sess.event_id || event.id,
+          stadium: mapData.stadium,
+          zones: enrichedZones,
+          sections: mapData.sections || [],
+          seats: [],
+        });
       }
       setMapStep("zones");
       setZoneId("");
@@ -317,7 +367,6 @@ export default function App() {
       setSelected([]);
       setSeatStatusById({});
       setCheckout(null);
-      setMap((prev) => (prev ? { ...prev, seats: [] } : prev));
       setView(VIEWS.map);
     } catch (e) {
       setError(e.message || "Could not start booking. Please try again.");
@@ -338,10 +387,16 @@ export default function App() {
     // Docs: GET /booking-sessions/:id?section_id=
     const seatsRes = await api.getSeats(sessionId, secId);
     syncModeFromResponse(seatsRes);
-    const liveSeats = seatsRes.data?.availability?.seats || [];
+    const data = seatsRes.data || seatsRes;
+    const liveSeats =
+      data.availability?.seats ||
+      data.seats ||
+      data.availability?.section?.seats ||
+      [];
     const next = {};
     for (const s of liveSeats) {
       const id = String(s.seat_id || s.id);
+      if (!id || id === "undefined") continue;
       next[id] = {
         status: s.status || "available",
         price: s.price,
@@ -388,35 +443,48 @@ export default function App() {
     setError("");
     try {
       const liveSeats = await loadSectionSeats(session.session_id, secId);
+      if (!liveSeats.length) {
+        setError("No seats returned for this section.");
+        setMap((prev) => (prev ? { ...prev, seats: [] } : prev));
+        return;
+      }
+
       const geo = allSeatsRef.current.filter((s) => String(s.section_id) === secId);
       const liveById = new Map(liveSeats.map((s) => [String(s.seat_id || s.id), s]));
       const liveByCode = new Map(
         liveSeats.filter((s) => s.seat_code).map((s) => [String(s.seat_code), s])
       );
-      const overlap = geo.filter((g) => liveById.has(String(g.seat_id || g.id))).length;
-      // Remap geometry → holdable live seat ids (Core map/availability id mismatch).
-      const remapped = geo.map((g) => {
-        const geoId = String(g.seat_id || g.id);
-        let live = liveById.get(geoId);
-        if (!live && g.seat_code) live = liveByCode.get(String(g.seat_code));
-        if (!live && overlap === 0 && liveSeats.length === geo.length) {
-          // Last resort: same count, no id overlap — keep geo for paint; hold blocked until codes exist.
-          return { ...g, id: geoId, seat_id: geoId };
-        }
-        if (!live) {
-          return { ...g, id: geoId, seat_id: geoId, status: "sold" };
-        }
-        const liveId = String(live.seat_id || live.id);
-        return {
-          ...g,
-          id: liveId,
-          seat_id: liveId,
-          seat_code: live.seat_code || g.seat_code,
-          status: live.status || g.status || "available",
-          price: live.price ?? g.price,
-        };
-      });
-      setMap((prev) => (prev ? { ...prev, seats: remapped } : prev));
+
+      let painted;
+      if (geo.length) {
+        // Prefer stadium geometry from session map when present.
+        const overlap = geo.filter((g) => liveById.has(String(g.seat_id || g.id))).length;
+        painted = geo.map((g) => {
+          const geoId = String(g.seat_id || g.id);
+          let live = liveById.get(geoId);
+          if (!live && g.seat_code) live = liveByCode.get(String(g.seat_code));
+          if (!live && overlap === 0 && liveSeats.length === geo.length) {
+            return { ...g, id: geoId, seat_id: geoId };
+          }
+          if (!live) {
+            return { ...g, id: geoId, seat_id: geoId, status: "sold" };
+          }
+          const liveId = String(live.seat_id || live.id);
+          return {
+            ...g,
+            id: liveId,
+            seat_id: liveId,
+            seat_code: live.seat_code || g.seat_code,
+            status: live.status || g.status || "available",
+            price: live.price ?? g.price,
+          };
+        });
+      } else {
+        // Session map seats are often omitted for size — lay out live availability seats.
+        painted = layoutSectionSeats(section, liveSeats);
+      }
+
+      setMap((prev) => (prev ? { ...prev, seats: painted } : prev));
     } catch (e) {
       setError(e.message);
       setMap((prev) => (prev ? { ...prev, seats: [] } : prev));
@@ -468,10 +536,8 @@ export default function App() {
     setHoldBusy(true);
     setError("");
     try {
-      const holdRes = await api.createHold(session.session_id, {
-        seat_id: seatId,
-        idempotency_key: `demo-booking:${session.session_id}:${seatId}`,
-      });
+      // Guide step 4: POST /holds { seat_id } only
+      const holdRes = await api.createHold(session.session_id, seatId);
       syncModeFromResponse(holdRes);
       const hold = holdRes.data?.hold || holdRes.hold;
       if (!hold?.id) throw new Error("Hold response missing hold.id");
@@ -587,13 +653,18 @@ export default function App() {
     setPaying(true);
     setError("");
     try {
+      // Guide step 6 via BFF: partner pay → POST /purchases (docs body + customer)
       const res = await api.pay({
         session_id: session.session_id,
-        owner_ref: session.owner_ref || "demo-booking-user",
         hold_ids: selected.map((s) => s.hold_id).filter(Boolean),
         payment_method: "ORANGE_MONEY",
         payment_status: "yes",
         event_title: event?.title || null,
+        customer: {
+          name: "Demo Booking Fan",
+          phone: "+224620000000",
+          email: "fan@example.com",
+        },
       });
       const tickets =
         res.purchase?.tickets ||
@@ -865,12 +936,19 @@ export default function App() {
 
                 <h3>Price zones</h3>
                 <ul className="price-list">
-                  {eventPriceZones(event, zones).map((z) => (
-                    <li key={z.code || z.name}>
-                      <span>{z.name}</span>
-                      <strong>{formatGnf(z.price)}</strong>
+                  {eventPriceZones(event, zones).length ? (
+                    eventPriceZones(event, zones).map((z) => (
+                      <li key={z.code || z.name}>
+                        <span>{z.name}</span>
+                        <strong>{formatGnf(z.price)}</strong>
+                      </li>
+                    ))
+                  ) : (
+                    <li>
+                      <span>From</span>
+                      <strong>{formatGnf(eventMinPrice(event))}</strong>
                     </li>
-                  ))}
+                  )}
                 </ul>
               </div>
 
@@ -919,7 +997,13 @@ export default function App() {
                 </div>
                 <div className="mini-map preview">
                   <p className="mini-title">Stadium</p>
-                  <StadiumVenue map={map} mode="zones" interactive={false} compact />
+                  {map?.zones?.length ? (
+                    <StadiumVenue map={map} mode="zones" interactive={false} compact />
+                  ) : (
+                    <p className="pb-muted small">
+                      Map loads when you open a booking session (POST /booking-sessions).
+                    </p>
+                  )}
                 </div>
               </aside>
             </div>

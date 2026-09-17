@@ -218,19 +218,7 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
     };
   }
 
-  const eventMatch = path.match(/^\/api\/v1\/public\/events\/([^/]+)$/);
-  if (m === "GET" && eventMatch) {
-    const ev = EVENTS.find((e) => e.id === eventMatch[1] && e.invited);
-    if (!ev) bad(404, "Event not found (partner not invited)");
-    return { success: true, data: ev };
-  }
-
-  const mapMatch = path.match(/^\/api\/v1\/public\/events\/([^/]+)\/map$/);
-  if (m === "GET" && mapMatch) {
-    const ev = EVENTS.find((e) => e.id === mapMatch[1] && e.invited);
-    if (!ev) bad(404, "Event not found (partner not invited)");
-    return { success: true, data: mapFor(mapMatch[1]) };
-  }
+  // Guide has no GET /events/:id or GET /events/:id/map — map comes from POST /booking-sessions.
 
   if (m === "POST" && path === "/api/v1/public/booking-sessions") {
     if (!accessOk(body?.access_code)) bad(403, "Invalid access_code — invite secret does not match");
@@ -240,16 +228,55 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
 
     const sessionId = randomUUID();
     const expires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const map = mapFor(eventId);
     const session = {
       session_id: sessionId,
       event_id: eventId,
-      owner_ref: body?.owner_ref || "demo-user",
       status: "ACTIVE",
       expires_at: expires,
       requires_access_code: true,
     };
     demoState.sessions.set(sessionId, session);
-    return { success: true, message: "Booking session created", data: session };
+    // Guide: reply includes event + stadium map (zones / sections / seats).
+    return {
+      success: true,
+      message: "Booking session created",
+      data: {
+        ...session,
+        event: {
+          id: ev.id,
+          title: ev.title,
+          min_price: ev.min_price,
+          currency: ev.currency,
+          pricing: {
+            currency: ev.currency,
+            min_price: ev.min_price,
+            zones: (ev.pricing_zones || []).map((z) => ({
+              name: z.name,
+              code: z.code,
+              price: z.price,
+            })),
+          },
+          availability: { status: "available", remaining: map.seats?.length || 0 },
+        },
+        map,
+        availability: {
+          event_id: eventId,
+          scope: "overview",
+          sold_out: false,
+          remaining: map.seats?.length || 0,
+          zones: map.zones.map((z) => ({ id: z.id, remaining: z.sales_available_seats })),
+          sections: map.sections.map((s) => ({
+            id: s.id,
+            zone_id: s.zone_id,
+            code: s.code,
+            name: s.name,
+            remaining: 32,
+          })),
+        },
+        holds: [],
+      },
+    };
   }
 
   const sessionMatch = path.match(/^\/api\/v1\/public\/booking-sessions\/([^/]+)$/);
@@ -341,17 +368,20 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
       data: {
         session_id: sessionId,
         event_id: session.event_id,
-        owner_ref: session.owner_ref,
         amount,
         currency: "GNF",
         items,
-        checkout_token: `demo-checkout-${sessionId}`,
         next_step: "collect_payment_on_partner_side",
       },
     };
   }
 
   if (m === "POST" && path === "/api/v1/public/purchases") {
+    // Guide: order_id, amount, currency, payment_method, payment_reference, hold_ids, customer
+    if (!body?.order_id || body?.amount == null || !body?.currency || !body?.payment_method || !body?.payment_reference) {
+      bad(400, "Missing purchase fields (order_id, amount, currency, payment_method, payment_reference, hold_ids, customer)");
+    }
+    if (!body?.customer?.name) bad(400, "customer.name is required");
     const holdIds = body?.hold_ids || [];
     const tickets = [];
     for (const hid of holdIds) {
@@ -373,10 +403,11 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
     return {
       success: true,
       data: {
-        order_id: body?.order_id || randomUUID(),
+        order_id: body.order_id,
         status: "completed",
-        amount: body?.amount || tickets.reduce((s, t) => s + 0, 0) || body?.amount,
-        currency: "GNF",
+        amount: body.amount,
+        currency: body.currency || "GNF",
+        customer: body.customer,
         tickets,
       },
     };

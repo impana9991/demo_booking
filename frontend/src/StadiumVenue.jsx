@@ -231,7 +231,9 @@ export default function StadiumVenue({
           })}
 
         {mode === "seats" &&
-          sectionSeats.map((seat) => {
+          sectionSeats
+            .filter((seat) => Number.isFinite(Number(seat.position_x)) && Number.isFinite(Number(seat.position_y)))
+            .map((seat) => {
             const id = String(seat.seat_id || seat.id);
             const mine = selected.has(id);
             const sold = seat.status === "sold" || seat.status === "reserved";

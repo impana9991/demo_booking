@@ -1,10 +1,12 @@
 import { Router } from "express";
-import { randomUUID } from "crypto";
 import { isDemoMode, stadepassRequest } from "../stadepass/client.js";
 
 const router = Router();
 
-/** Core embeds ~20k map seats in session payloads — drop them; UI already has GET /map. */
+/**
+ * Core may embed a huge seats[] in session.map — keep zones/sections for the UI,
+ * omit seat geometry (section seats come from GET ?section_id=).
+ */
 function slimSessionPayload(payload) {
   if (!payload || typeof payload !== "object") return payload;
   const data = payload.data;
@@ -25,12 +27,12 @@ function slimSessionPayload(payload) {
   };
 }
 
+/** Guide step 2: POST { event_id, access_code } only — map is in the reply. */
 router.post("/", async (req, res, next) => {
   try {
-    const { event_id, access_code, owner_ref } = req.body || {};
+    const { event_id, access_code } = req.body || {};
     if (!event_id) return res.status(400).json({ error: "event_id is required" });
 
-    // Guide: access_code = event invite code only (not partner code).
     const fromBody = String(access_code || "").trim();
     const fromEnv = String(process.env.STADEPASS_EVENT_ACCESS_CODE || "").trim();
     const code = fromBody || fromEnv || (isDemoMode() ? "demo-access" : "");
@@ -38,7 +40,7 @@ router.post("/", async (req, res, next) => {
     if (!code) {
       return res.status(400).json({
         error:
-          "Event invite code (access_code) required to open this event. Enter it on the event page or set STADEPASS_EVENT_ACCESS_CODE.",
+          "Event invite code (access_code) required. Enter it on the event page or set STADEPASS_EVENT_ACCESS_CODE.",
       });
     }
 
@@ -49,7 +51,6 @@ router.post("/", async (req, res, next) => {
         body: {
           event_id: String(event_id),
           access_code: String(code),
-          owner_ref: owner_ref || `demo-booking-user-${randomUUID().slice(0, 8)}`,
         },
       });
       res.status(201).json({ demo: isDemoMode(), ...slimSessionPayload(data) });
@@ -70,6 +71,7 @@ router.post("/", async (req, res, next) => {
   }
 });
 
+/** Guide step 3: GET /booking-sessions/:id?section_id= */
 router.get("/:sessionId", async (req, res, next) => {
   try {
     const data = await stadepassRequest({
@@ -77,25 +79,22 @@ router.get("/:sessionId", async (req, res, next) => {
       path: `/api/v1/public/booking-sessions/${req.params.sessionId}`,
       query: { section_id: req.query.section_id },
     });
-    // Keep section availability.seats; strip embedded stadium map seats only.
     res.json({ demo: isDemoMode(), ...slimSessionPayload(data) });
   } catch (e) {
     next(e);
   }
 });
 
+/** Guide step 4: POST { seat_id } only */
 router.post("/:sessionId/holds", async (req, res, next) => {
   try {
-    const { seat_id, idempotency_key } = req.body || {};
+    const { seat_id } = req.body || {};
     if (!seat_id) return res.status(400).json({ error: "seat_id is required" });
 
     const data = await stadepassRequest({
       method: "POST",
       path: `/api/v1/public/booking-sessions/${req.params.sessionId}/holds`,
-      body: {
-        seat_id: String(seat_id),
-        idempotency_key: idempotency_key || `hold:${req.params.sessionId}:${seat_id}:${Date.now()}`,
-      },
+      body: { seat_id: String(seat_id) },
     });
     res.status(201).json({ demo: isDemoMode(), ...data });
   } catch (e) {
@@ -103,9 +102,9 @@ router.post("/:sessionId/holds", async (req, res, next) => {
   }
 });
 
+/** Guide: DELETE …/holds/:holdId — no body */
 router.delete("/:sessionId/holds/:holdId", async (req, res, next) => {
   try {
-    // Guide: DELETE release-hold — no body.
     const data = await stadepassRequest({
       method: "DELETE",
       path: `/api/v1/public/booking-sessions/${req.params.sessionId}/holds/${req.params.holdId}`,
@@ -116,6 +115,7 @@ router.delete("/:sessionId/holds/:holdId", async (req, res, next) => {
   }
 });
 
+/** Guide step 5: GET …/checkout */
 router.get("/:sessionId/checkout", async (req, res, next) => {
   try {
     const data = await stadepassRequest({

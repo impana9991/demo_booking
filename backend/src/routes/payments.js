@@ -6,24 +6,20 @@ import { saveOrder } from "../tickets/store.js";
 const router = Router();
 
 /**
- * After holds (POST /holds) and within ~8 minutes:
- *   1) GET /booking-sessions/:id/checkout
- *   2) partner payment (status yes)
- *   3) POST /purchases with hold_ids + amount + payment_reference
- *
- * Also sends event_id / session_id / checkout_token when Core provides them,
- * because local Core currently 404s "Event not found" on the docs-minimal body alone.
+ * Partner payment (not a Core API) then guide step 6: POST /purchases
+ * Docs body only:
+ *   order_id, amount, currency, payment_method, payment_reference, hold_ids, customer
+ * Holds must already exist (POST /holds) and checkout must be readable.
  */
 router.post("/pay", async (req, res, next) => {
   try {
     const {
       session_id,
-      owner_ref,
       hold_ids: bodyHoldIds = [],
-      seat_ids = [],
       payment_method = "ORANGE_MONEY",
       payment_status = "yes",
       event_title = null,
+      customer = null,
     } = req.body || {};
 
     if (!session_id) {
@@ -43,57 +39,48 @@ router.post("/pay", async (req, res, next) => {
       });
     }
 
-    if (!bodyHoldIds.length && seat_ids.length) {
-      for (const seatId of seat_ids) {
-        await stadepassRequest({
-          method: "POST",
-          path: `/api/v1/public/booking-sessions/${session_id}/holds`,
-          body: {
-            seat_id: String(seatId),
-            idempotency_key: `demo-booking:${session_id}:${seatId}:${Date.now()}`,
-          },
-        });
-      }
-    }
-
     const checkoutRes = await stadepassRequest({
       method: "GET",
       path: `/api/v1/public/booking-sessions/${session_id}/checkout`,
     });
     const checkout = checkoutRes.data || checkoutRes;
-    const holdIds = (checkout.items || []).map((i) => String(i.hold_id)).filter(Boolean);
+    const fromCheckout = (checkout.items || []).map((i) => String(i.hold_id)).filter(Boolean);
+    const holdIds = (Array.isArray(bodyHoldIds) && bodyHoldIds.length
+      ? bodyHoldIds.map(String)
+      : fromCheckout
+    ).filter(Boolean);
 
     if (!holdIds.length) {
       return res.status(400).json({
-        error:
-          "No holds on checkout — POST /holds first, then GET /checkout before the ~8 min hold expires",
+        error: "No hold_ids — reserve seats with POST /holds, then GET /checkout before paying",
       });
     }
 
     const amount = Number(checkout.amount);
+    const currency = checkout.currency || "GNF";
     const payment = {
       status: "yes",
       method: payment_method,
       reference: `DB-${Date.now()}`,
       amount,
-      currency: checkout.currency || "GNF",
+      currency,
       charged_at: new Date().toISOString(),
     };
 
     const orderId = randomUUID();
     const purchaseBody = {
       order_id: orderId,
-      idempotency_key: `demo-booking-order-${orderId}`,
-      owner_ref: owner_ref || checkout.owner_ref || "demo-booking-user",
       amount,
-      currency: checkout.currency || "GNF",
+      currency,
       payment_method,
       payment_reference: payment.reference,
       hold_ids: holdIds,
+      customer: {
+        name: customer?.name || "Demo Booking Fan",
+        phone: customer?.phone || "+224620000000",
+        email: customer?.email || "fan@example.com",
+      },
     };
-    if (checkout.event_id != null) purchaseBody.event_id = checkout.event_id;
-    if (checkout.checkout_token) purchaseBody.checkout_token = checkout.checkout_token;
-    purchaseBody.session_id = String(session_id);
 
     try {
       const purchaseRes = await stadepassRequest({
@@ -115,7 +102,7 @@ router.post("/pay", async (req, res, next) => {
         event_id: checkout.event_id,
         event_title,
         amount,
-        currency: checkout.currency || "GNF",
+        currency,
         payment_reference: payment.reference,
         tickets,
       });
@@ -124,61 +111,17 @@ router.post("/pay", async (req, res, next) => {
         demo: isDemoMode(),
         payment,
         checkout,
-        checkout_token: checkout.checkout_token,
         purchase: purchaseOut,
       });
     } catch (e) {
-      // Core bug on invited events: holds+checkout OK, POST /purchases → Event not found.
-      // Still return a partner-side receipt so Demo/Live UI can show seats after pay.
-      if (e.status === 404 || /event not found/i.test(String(e.message || ""))) {
-        const tickets = (checkout.items || []).map((item, idx) => ({
-          id: String(item.hold_id || item.seat_id || idx),
-          hold_id: item.hold_id,
-          seat_id: item.seat_id,
-          seat_code: item.seat_code,
-          ticket_number: `DB-${String(idx + 1).padStart(3, "0")}`,
-          status: isDemoMode() ? "SOLD" : "CONFIRMED",
-          price: item.price,
-        }));
-        const warning = isDemoMode()
-          ? null
-          : "Payment recorded on partner side. Core POST /purchases returned Event not found — ticket numbers are provisional until Core fixes invited-event purchases.";
-        saveOrder({
-          order_id: orderId,
-          demo: isDemoMode(),
-          event_id: checkout.event_id,
-          event_title,
-          amount,
-          currency: checkout.currency || "GNF",
-          payment_reference: payment.reference,
-          warning,
-          tickets,
-        });
-        return res.json({
-          success: true,
-          demo: isDemoMode(),
-          warning,
-          payment,
-          checkout,
-          checkout_token: checkout.checkout_token,
-          purchase: {
-            order_id: orderId,
-            status: "completed",
-            amount,
-            currency: checkout.currency || "GNF",
-            tickets,
-          },
-        });
-      }
       const err = new Error(e.message || "Purchase failed");
       err.status = e.status || 500;
       err.payload = {
         ...(e.payload || {}),
+        sent_to_core: purchaseBody,
         checkout_summary: {
-          event_id: checkout.event_id,
           amount: checkout.amount,
           hold_ids: holdIds,
-          remaining: (checkout.items || []).map((i) => i.remaining_seconds),
         },
       };
       throw err;
