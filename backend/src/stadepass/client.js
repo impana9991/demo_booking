@@ -38,6 +38,14 @@ export async function stadepassRequest({ method, path, query = {}, body = null }
     err.status = 500;
     throw err;
   }
+  // Public partner API only — block accidental local Core (localhost / 127.0.0.1).
+  if (/localhost|127\.0\.0\.1/i.test(base)) {
+    const err = new Error(
+      `STADEPASS_BASE_URL must be https://book.stadepassgn.com (got ${base}).`
+    );
+    err.status = 500;
+    throw err;
+  }
 
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
