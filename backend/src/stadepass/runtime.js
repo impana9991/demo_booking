@@ -42,6 +42,13 @@ export function setRuntimeMode({ mode, partnerCode }) {
     err.status = 400;
     throw err;
   }
+  if (/localhost|127\.0\.0\.1/i.test(base)) {
+    const err = new Error(
+      "Live mode must use https://book.stadepassgn.com — not a local Core URL."
+    );
+    err.status = 400;
+    throw err;
+  }
 
   state.mode = "live";
   state.partnerCode = code;
