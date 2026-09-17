@@ -18,6 +18,16 @@ async function request(path, options = {}) {
   return json;
 }
 
+/**
+ * Partner BFF → Core Public API (guide only):
+ * 1 GET  /events
+ * 2 POST /booking-sessions { event_id, access_code }
+ * 3 GET  /booking-sessions/:id?section_id=
+ * 4 POST /booking-sessions/:id/holds { seat_id }
+ * 5 DELETE /booking-sessions/:id/holds/:holdId
+ * 6 GET  /booking-sessions/:id/checkout
+ * 7 POST /purchases { order_id, amount, currency, payment_method, payment_reference, hold_ids, customer }
+ */
 export const api = {
   health: () => request("/api/health"),
   getMode: () => request("/api/mode"),
@@ -29,9 +39,6 @@ export const api = {
     ).toString();
     return request(`/api/events${qs ? `?${qs}` : ""}`);
   },
-  getEvent: (id) => request(`/api/events/${id}`),
-  getMap: (id) => request(`/api/events/${id}/map`),
-  /** Guide: POST /booking-sessions { event_id, access_code } */
   createSession: (body) =>
     request("/api/booking-sessions", { method: "POST", body: JSON.stringify(body) }),
   getSession: (sessionId, sectionId) => {
@@ -40,12 +47,11 @@ export const api = {
   },
   getSeats: (sessionId, sectionId) =>
     request(`/api/booking-sessions/${sessionId}?section_id=${encodeURIComponent(sectionId)}`),
-  createHold: (sessionId, body) =>
+  createHold: (sessionId, seatId) =>
     request(`/api/booking-sessions/${sessionId}/holds`, {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ seat_id: String(seatId) }),
     }),
-  /** Guide: DELETE …/holds/:holdId — no body */
   releaseHold: (sessionId, holdId) =>
     request(`/api/booking-sessions/${sessionId}/holds/${holdId}`, { method: "DELETE" }),
   checkout: (sessionId) => request(`/api/booking-sessions/${sessionId}/checkout`),
