@@ -370,6 +370,7 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
       zone_id: String(seat.zone_id),
       porte: seat.porte || null,
       tribune: seat.tribune || null,
+      route: seat.route || null,
       route_texte: seat.route_texte || null,
     };
     demoState.holds.set(holdId, hold);
@@ -438,8 +439,23 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
         ...(h.section_code ? { section_code: h.section_code } : {}),
         ...(h.rangee ? { row: h.rangee } : {}),
         ...(h.numero_place != null ? { seat_number: String(h.numero_place) } : {}),
-        ...(h.porte ? { porte: h.porte } : {}),
-        ...(h.route_texte ? { route_texte: h.route_texte } : {}),
+        // Core PublicPurchaseTicketDto.place — places-restantes (no qr_code here).
+        place: {
+          place_id: Number(h.seat_id) || h.seat_id,
+          place: h.place || h.seat_code,
+          numero_place: h.numero_place != null ? Number(h.numero_place) : 0,
+          rangee: h.rangee || "",
+          secteur: h.section_code || null,
+          porte: h.porte || null,
+          tribune: h.tribune || null,
+          route: Array.isArray(h.route)
+            ? h.route
+            : [h.porte?.nom, h.section_code, h.rangee, h.place || h.seat_code].filter(Boolean),
+          route_texte:
+            h.route_texte ||
+            [h.porte?.nom, h.section_code, h.rangee, h.place || h.seat_code].filter(Boolean).join(" → "),
+          code_litige: `STD-${h.event_id}-S${h.seat_id}`,
+        },
         qr: {
           payload: code,
           image_url: tinyPng,

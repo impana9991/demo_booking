@@ -150,8 +150,8 @@ function saveLocalOrder(order) {
 
 /**
  * Core ticket QR (ticketing_back_app):
- *   qr: { payload, image_url }  // Cloudinary HTTPS
- * Older samples may still use image_data_url.
+ *   qr: { payload, image_url }  // Cloudinary HTTPS — optional display
+ * Place detail is under ticket.place (no qr_code inside place).
  */
 function ticketQrSrc(t) {
   if (!t || typeof t !== "object") return null;
@@ -173,29 +173,45 @@ function ticketPayload(t) {
   return t?.qr?.payload || t?.ticket_code || t?.qr_code || null;
 }
 
-function ticketSeatLabel(t) {
-  if (!t || typeof t !== "object") return "—";
-  if (t.section_code || t.row || t.seat_number) {
-    return [t.section_code, t.row, t.seat_number].filter(Boolean).join(" · ") || t.seat_code || "—";
-  }
-  return t.seat_code || t.place || t.seat_id || "—";
+/** Prefer Core ticket.place (places-restantes); fall back to flat fields. */
+function ticketPlace(t) {
+  if (!t || typeof t !== "object") return null;
+  if (t.place && typeof t.place === "object" && !Array.isArray(t.place)) return t.place;
+  return null;
 }
 
 function TicketCard({ ticket: t }) {
   const qrSrc = ticketQrSrc(t);
   const code = ticketPayload(t);
-  const seatLabel = ticketSeatLabel(t);
-  const porte = t.porte?.nom || t.porte?.libelle || null;
+  const place = ticketPlace(t);
+  const porteNom = place?.porte?.nom || place?.porte?.libelle || null;
+  const tribuneNom = place?.tribune?.nom || null;
+  const rangee = place?.rangee || t.row || null;
+  const siege = place?.place || t.seat_code || null;
+  const numero = place?.numero_place ?? t.seat_number ?? null;
+  const secteur = place?.secteur || t.section_code || null;
+  const routeTexte = place?.route_texte || t.route_texte || null;
   return (
     <li className="ticket-card">
       <div className="ticket-card-main">
         <strong>{t.ticket_number || t.id || "Ticket"}</strong>
-        <span>
-          Seat {seatLabel}
+        {(porteNom || tribuneNom) && (
+          <span className="ticket-place-line">
+            {[porteNom, tribuneNom].filter(Boolean).join(" · ")}
+          </span>
+        )}
+        <span className="ticket-place-line">
+          {[
+            secteur && `Secteur ${secteur}`,
+            rangee && `Rangée ${rangee}`,
+            (siege || numero != null) && `Siège ${siege || numero}`,
+          ]
+            .filter(Boolean)
+            .join(" · ") || t.seat_code || "—"}
           {t.status ? ` · ${t.status}` : ""}
         </span>
-        {porte && <span className="ticket-meta">{porte}</span>}
-        {t.route_texte && <span className="ticket-meta">{t.route_texte}</span>}
+        {routeTexte && <span className="ticket-meta">{routeTexte}</span>}
+        {place?.code_litige && <span className="ticket-meta">{place.code_litige}</span>}
         {code && <span className="ticket-code">{code}</span>}
       </div>
       {qrSrc ? (
