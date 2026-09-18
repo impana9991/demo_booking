@@ -99,7 +99,15 @@ function buildMap(eventId) {
         outer_radius: z.outer - 40,
       });
 
-      // 4 rows × 8 seats with cartesian positions for zoom view
+      // 4 rows × 8 seats — shape matches Core PublicMapSeatDto (places-restantes fields).
+      const rowLetters = ["A", "B", "C", "D"];
+      const porteLib = z.name.replace(/^Tribune\s+/i, "") || z.code;
+      const porte = {
+        code: `PORTE-${z.code.replace("TRIB-", "")}`,
+        nom: `Porte ${porteLib}`,
+        libelle: porteLib,
+      };
+      const tribune = { code: z.code, nom: z.name, couleur: z.color };
       let n = 0;
       for (let row = 0; row < 4; row++) {
         for (let col = 0; col < 8; col++) {
@@ -109,19 +117,35 @@ function buildMap(eventId) {
           const r = z.inner + 80 + row * ((z.outer - z.inner - 120) / 3);
           const [x, y] = polar(r, deg);
           const seatId = `${secId}${String(n).padStart(2, "0")}`;
+          const rangee = rowLetters[row];
+          const numero = col + 1;
+          const place = `${rangee}${numero}`;
+          const seat_code = `${code}-${rangee}${numero}`;
+          const route = [`Enter ${porte.nom}`, `Section ${code}`, `Row ${rangee}`, `Seat ${place}`];
           seats.push({
             id: seatId,
             seat_id: seatId,
             section_id: secId,
             zone_id: z.id,
-            seat_code: `${code}-${row + 1}-${col + 1}`,
-            row: String(row + 1),
-            number: String(col + 1),
+            seat_code,
+            row: row + 1,
+            number: numero,
             position_x: x,
             position_y: y,
             price: z.price,
             currency: "GNF",
             status: "available",
+            is_accessible: false,
+            display_color: z.color,
+            place_id: seatId,
+            place,
+            numero_place: numero,
+            rangee,
+            secteur: null,
+            porte,
+            tribune,
+            route,
+            route_texte: route.join(" → "),
           });
         }
       }
@@ -161,11 +185,11 @@ function buildSeats(eventId, sectionId) {
   return map.seats
     .filter((s) => String(s.section_id) === String(sectionId))
     .map((s) => ({
+      ...s,
       seat_id: String(s.id),
       id: String(s.id),
-      seat_code: s.seat_code,
+      place_id: String(s.place_id || s.id),
       status: seatStatus(String(s.id)),
-      price: s.price,
       currency: "GNF",
       section_id: String(s.section_id),
       zone_id: String(s.zone_id),
@@ -323,6 +347,7 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
     const map = mapFor(session.event_id);
     const seat = map.seats.find((s) => String(s.id) === seatId);
     if (!seat) bad(404, "Seat not found");
+    const section = map.sections.find((sec) => String(sec.id) === String(seat.section_id));
     const holdId = randomUUID();
     const expiresAt = new Date(Date.now() + 8 * 60 * 1000).toISOString();
     const hold = {
@@ -330,14 +355,22 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
       session_id: sessionId,
       event_id: session.event_id,
       seat_id: seatId,
+      place_id: seat.place_id || seatId,
       status: "held",
       expires_at: expiresAt,
       remaining_seconds: 480,
       price: seat.price,
       currency: "GNF",
       seat_code: seat.seat_code,
+      place: seat.place,
+      rangee: seat.rangee,
+      numero_place: seat.numero_place,
+      section_code: section?.code || null,
       section_id: String(seat.section_id),
       zone_id: String(seat.zone_id),
+      porte: seat.porte || null,
+      tribune: seat.tribune || null,
+      route_texte: seat.route_texte || null,
     };
     demoState.holds.set(holdId, hold);
     return { success: true, data: { session_id: sessionId, hold } };
@@ -390,7 +423,7 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
       h.status = "sold";
       demoState.soldSeats.add(h.seat_id);
       const code = `GN28-DEMO${String(tickets.length + 1).padStart(4, "0")}`;
-      // Demo stands in for Core's ready-to-display QR (Live: real PNG data-URL).
+      // Demo stand-in for Core qr.image_url (Live: Cloudinary HTTPS).
       const tinyPng =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
       tickets.push({
@@ -402,9 +435,14 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
         ticket_number: `TK-2026-${String(tickets.length + 1).padStart(3, "0")}-GN`,
         status: "SOLD",
         seat_code: h.seat_code,
+        ...(h.section_code ? { section_code: h.section_code } : {}),
+        ...(h.rangee ? { row: h.rangee } : {}),
+        ...(h.numero_place != null ? { seat_number: String(h.numero_place) } : {}),
+        ...(h.porte ? { porte: h.porte } : {}),
+        ...(h.route_texte ? { route_texte: h.route_texte } : {}),
         qr: {
           payload: code,
-          image_data_url: tinyPng,
+          image_url: tinyPng,
         },
       });
     }

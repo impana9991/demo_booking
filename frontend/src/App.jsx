@@ -149,16 +149,19 @@ function saveLocalOrder(order) {
 }
 
 /**
- * Core ticket QR shape:
- *   qr: { payload, image_data_url: "data:image/png;base64,…" }
- * Prefer image_data_url for <img src>.
+ * Core ticket QR (ticketing_back_app):
+ *   qr: { payload, image_url }  // Cloudinary HTTPS
+ * Older samples may still use image_data_url.
  */
 function ticketQrSrc(t) {
   if (!t || typeof t !== "object") return null;
-  const dataUrl = t.qr?.image_data_url || t.qr?.imageDataUrl;
-  if (typeof dataUrl === "string" && dataUrl.trim()) return dataUrl;
-  // Legacy / alternate fields
-  const img = t.qr_image || t.image_data_url;
+  const nested =
+    t.qr?.image_url ||
+    t.qr?.image_data_url ||
+    t.qr?.imageDataUrl ||
+    t.qr?.imageUrl;
+  if (typeof nested === "string" && nested.trim()) return nested;
+  const img = t.qr_image || t.image_data_url || t.image_url;
   if (typeof img === "string" && img.trim()) {
     if (img.startsWith("data:") || img.startsWith("http")) return img;
     if (img.length > 48) return `data:image/png;base64,${img}`;
@@ -170,17 +173,29 @@ function ticketPayload(t) {
   return t?.qr?.payload || t?.ticket_code || t?.qr_code || null;
 }
 
+function ticketSeatLabel(t) {
+  if (!t || typeof t !== "object") return "—";
+  if (t.section_code || t.row || t.seat_number) {
+    return [t.section_code, t.row, t.seat_number].filter(Boolean).join(" · ") || t.seat_code || "—";
+  }
+  return t.seat_code || t.place || t.seat_id || "—";
+}
+
 function TicketCard({ ticket: t }) {
   const qrSrc = ticketQrSrc(t);
   const code = ticketPayload(t);
+  const seatLabel = ticketSeatLabel(t);
+  const porte = t.porte?.nom || t.porte?.libelle || null;
   return (
     <li className="ticket-card">
       <div className="ticket-card-main">
         <strong>{t.ticket_number || t.id || "Ticket"}</strong>
         <span>
-          Seat {t.seat_code || t.seat_id || "—"}
+          Seat {seatLabel}
           {t.status ? ` · ${t.status}` : ""}
         </span>
+        {porte && <span className="ticket-meta">{porte}</span>}
+        {t.route_texte && <span className="ticket-meta">{t.route_texte}</span>}
         {code && <span className="ticket-code">{code}</span>}
       </div>
       {qrSrc ? (
@@ -739,15 +754,15 @@ export default function App() {
         res.purchase?.data?.tickets ||
         res.tickets ||
         [];
-      // Keep full Core ticket objects including qr: { payload, image_data_url }.
+      // Keep full Core ticket objects including qr: { payload, image_url }.
       const tickets = (ticketsRaw.length ? ticketsRaw : selected).map((t, idx) => {
         if (t && (t.ticket_number || t.id || t.qr || t.ticket_code)) return { ...t };
         const s = selected[idx] || t || {};
         return {
           id: s.hold_id || s.seat_id || String(idx),
           ticket_number: `DB-${String(idx + 1).padStart(3, "0")}`,
-          seat_code: s.seat_code,
-          seat_id: s.seat_id,
+          seat_code: s.seat_code || s.place,
+          seat_id: s.seat_id || s.place_id,
           status: "CONFIRMED",
         };
       });
