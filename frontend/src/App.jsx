@@ -12,6 +12,13 @@ function formatGnf(amount) {
   return formatGnfVenue(amount);
 }
 
+/** Hold / status key — Core place_id is UNIQUE (prefer over label). */
+function seatKey(s) {
+  if (!s || typeof s !== "object") return "";
+  const id = s.place_id ?? s.seat_id ?? s.id;
+  return id != null && String(id) !== "" && String(id) !== "undefined" ? String(id) : "";
+}
+
 /** Place seats in the section ring when Core/availability has no position_x/y. */
 function layoutSectionSeats(section, liveSeats) {
   if (!Array.isArray(liveSeats) || !liveSeats.length) return [];
@@ -20,12 +27,16 @@ function layoutSectionSeats(section, liveSeats) {
     (s) => Number.isFinite(Number(s.position_x)) && Number.isFinite(Number(s.position_y))
   );
   if (withGeo) {
-    return liveSeats.map((s) => ({
-      ...s,
-      id: String(s.seat_id || s.id),
-      seat_id: String(s.seat_id || s.id),
-      section_id: String(s.section_id || section?.id || ""),
-    }));
+    return liveSeats.map((s) => {
+      const id = seatKey(s);
+      return {
+        ...s,
+        id,
+        seat_id: id,
+        place_id: s.place_id ?? (Number(id) || id),
+        section_id: String(s.section_id || section?.id || ""),
+      };
+    });
   }
 
   const cols = Math.max(8, Math.ceil(Math.sqrt(liveSeats.length * 1.6)));
@@ -46,7 +57,7 @@ function layoutSectionSeats(section, liveSeats) {
   return liveSeats.map((s, i) => {
     const row = Math.floor(i / cols);
     const col = i % cols;
-    const id = String(s.seat_id || s.id);
+    const id = seatKey(s);
     let position_x;
     let position_y;
     if (hasArc) {
@@ -64,7 +75,8 @@ function layoutSectionSeats(section, liveSeats) {
       ...s,
       id,
       seat_id: id,
-      seat_code: s.seat_code || id,
+      place_id: s.place_id ?? (Number(id) || id),
+      seat_code: s.seat_code || s.place || id,
       section_id: String(s.section_id || section?.id || ""),
       zone_id: s.zone_id != null ? String(s.zone_id) : section?.zone_id != null ? String(section.zone_id) : undefined,
       status: s.status || "available",
@@ -494,21 +506,24 @@ export default function App() {
     const list = scoped.length ? scoped : liveSeats;
     const next = {};
     for (const s of list) {
-      const id = String(s.seat_id || s.id);
-      if (!id || id === "undefined") continue;
+      const id = seatKey(s);
+      if (!id) continue;
       next[id] = {
         status: s.status || "available",
         price: s.price,
-        seat_code: s.seat_code,
+        seat_code: s.seat_code || s.place,
+        place: s.place,
+        place_id: s.place_id,
       };
     }
     for (const sel of heldSeats) {
       if (String(sel.section_id) === String(secId) && sel.hold_id) {
-        next[String(sel.seat_id)] = {
-          ...(next[String(sel.seat_id)] || {}),
+        const sid = seatKey(sel);
+        next[sid] = {
+          ...(next[sid] || {}),
           status: "held",
-          price: sel.price ?? next[String(sel.seat_id)]?.price,
-          seat_code: sel.seat_code || next[String(sel.seat_id)]?.seat_code,
+          price: sel.price ?? next[sid]?.price,
+          seat_code: sel.seat_code || sel.place || next[sid]?.seat_code,
         };
       }
     }
@@ -517,12 +532,14 @@ export default function App() {
   }
 
   function resolveHoldSeatId(seat) {
-    const raw = String(seat.seat_id || seat.id || "");
+    const raw = seatKey(seat);
     if (raw && seatStatusById[raw]) return raw;
-    const code = seat.seat_code;
+    const code = seat.place || seat.seat_code;
     if (code) {
       const match = Object.entries(seatStatusById).find(
-        ([, v]) => v.seat_code && String(v.seat_code) === String(code)
+        ([, v]) =>
+          (v.place && String(v.place) === String(code)) ||
+          (v.seat_code && String(v.seat_code) === String(code))
       );
       if (match) return match[0];
     }
@@ -549,33 +566,45 @@ export default function App() {
       }
 
       const geo = allSeatsRef.current.filter((s) => String(s.section_id) === secId);
-      const liveById = new Map(liveSeats.map((s) => [String(s.seat_id || s.id), s]));
+      const liveById = new Map(liveSeats.map((s) => [seatKey(s), s]));
       const liveByCode = new Map(
-        liveSeats.filter((s) => s.seat_code).map((s) => [String(s.seat_code), s])
+        liveSeats
+          .filter((s) => s.place || s.seat_code)
+          .map((s) => [String(s.place || s.seat_code), s])
       );
 
       let painted;
       if (geo.length) {
         // Prefer stadium geometry from session map when present.
-        const overlap = geo.filter((g) => liveById.has(String(g.seat_id || g.id))).length;
+        const overlap = geo.filter((g) => liveById.has(seatKey(g))).length;
         painted = geo.map((g) => {
-          const geoId = String(g.seat_id || g.id);
+          const geoId = seatKey(g);
           let live = liveById.get(geoId);
-          if (!live && g.seat_code) live = liveByCode.get(String(g.seat_code));
+          if (!live && (g.place || g.seat_code)) {
+            live = liveByCode.get(String(g.place || g.seat_code));
+          }
           if (!live && overlap === 0 && liveSeats.length === geo.length) {
-            return { ...g, id: geoId, seat_id: geoId };
+            return { ...g, id: geoId, seat_id: geoId, place_id: g.place_id ?? geoId };
           }
           if (!live) {
-            return { ...g, id: geoId, seat_id: geoId, status: "sold" };
+            return { ...g, id: geoId, seat_id: geoId, place_id: g.place_id ?? geoId, status: "sold" };
           }
-          const liveId = String(live.seat_id || live.id);
+          const liveId = seatKey(live);
           return {
             ...g,
             id: liveId,
             seat_id: liveId,
-            seat_code: live.seat_code || g.seat_code,
+            place_id: live.place_id ?? g.place_id ?? liveId,
+            seat_code: live.seat_code || live.place || g.seat_code,
+            place: live.place || g.place,
             status: live.status || g.status || "available",
             price: live.price ?? g.price,
+            porte: live.porte || g.porte,
+            tribune: live.tribune || g.tribune,
+            rangee: live.rangee || g.rangee,
+            numero_place: live.numero_place ?? g.numero_place,
+            route_texte: live.route_texte || g.route_texte,
+            code_litige: live.code_litige || g.code_litige,
           };
         });
       } else {
@@ -635,20 +664,27 @@ export default function App() {
     setHoldBusy(true);
     setError("");
     try {
-      // Guide step 4: POST /holds { seat_id } only
-      const holdRes = await api.createHold(session.session_id, seatId);
+      // Guide step 4: POST /holds { seat_id, section_id }
+      const holdRes = await api.createHold(session.session_id, seatId, {
+        section_id: seat.section_id || sectionId || undefined,
+      });
       syncModeFromResponse(holdRes);
       const hold = holdRes.data?.hold || holdRes.hold;
       if (!hold?.id) throw new Error("Hold response missing hold.id");
       const row = {
         seat_id: seatId,
+        place_id: seat.place_id ?? seatId,
         hold_id: String(hold.id),
-        seat_code: hold.seat_code || seat.seat_code,
+        seat_code: hold.seat_code || seat.seat_code || seat.place,
+        place: seat.place,
         price: hold.price ?? seat.price,
         section_id: String(hold.section_id || seat.section_id || sectionId),
         zone_id: String(hold.zone_id || seat.zone_id || zoneId),
         remaining_seconds: hold.remaining_seconds,
         expires_at: hold.expires_at,
+        porte: seat.porte || null,
+        rangee: seat.rangee,
+        numero_place: seat.numero_place,
       };
       setSelected((prev) => [...prev, row]);
       setSeatStatusById((prev) => ({

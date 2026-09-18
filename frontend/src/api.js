@@ -23,7 +23,7 @@ async function request(path, options = {}) {
  * 1 GET  /events
  * 2 POST /booking-sessions { event_id, access_code }
  * 3 GET  /booking-sessions/:id?section_id=
- * 4 POST /booking-sessions/:id/holds { seat_id }
+ * 4 POST /booking-sessions/:id/holds { seat_id, section_id? }
  * 5 DELETE /booking-sessions/:id/holds/:holdId
  * 6 GET  /booking-sessions/:id/checkout
  * 7 POST /purchases { order_id, amount, currency, payment_method, payment_reference, hold_ids, customer }
@@ -47,10 +47,15 @@ export const api = {
   },
   getSeats: (sessionId, sectionId) =>
     request(`/api/booking-sessions/${sessionId}?section_id=${encodeURIComponent(sectionId)}`),
-  createHold: (sessionId, seatId) =>
+  createHold: (sessionId, seatId, extra = {}) =>
     request(`/api/booking-sessions/${sessionId}/holds`, {
       method: "POST",
-      body: JSON.stringify({ seat_id: String(seatId) }),
+      body: JSON.stringify({
+        seat_id: String(seatId),
+        ...(extra.section_id != null && String(extra.section_id) !== ""
+          ? { section_id: String(extra.section_id) }
+          : {}),
+      }),
     }),
   releaseHold: (sessionId, holdId) =>
     request(`/api/booking-sessions/${sessionId}/holds/${holdId}`, { method: "DELETE" }),

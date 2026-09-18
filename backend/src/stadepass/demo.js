@@ -99,15 +99,24 @@ function buildMap(eventId) {
         outer_radius: z.outer - 40,
       });
 
-      // 4 rows × 8 seats — shape matches Core PublicMapSeatDto (places-restantes fields).
+      // 4 rows × 8 seats — Core PublicMapSeatDto / places-restantes shape.
       const rowLetters = ["A", "B", "C", "D"];
-      const porteLib = z.name.replace(/^Tribune\s+/i, "") || z.code;
-      const porte = {
-        code: `PORTE-${z.code.replace("TRIB-", "")}`,
-        nom: `Porte ${porteLib}`,
-        libelle: porteLib,
+      // Gates match docs/places-restantes.place-shape.sample.json
+      const porteByZone = {
+        "TRIB-OUEST": [
+          { code: "T01", nom: "Tribune Ouest 1", libelle: "Ouest 1" },
+          { code: "T04", nom: "Tribune Ouest 2", libelle: "Ouest 2" },
+        ],
+        "TRIB-EST": [{ code: "PORTE-EST", nom: "Tribune Est", libelle: "Est" }],
+        "TRIB-NORD": [{ code: "PORTE-NORD", nom: "Tribune Nord", libelle: "Nord" }],
+        "TRIB-SUD": [{ code: "PORTE-SUD", nom: "Tribune Sud", libelle: "Sud" }],
       };
+      const porteList = porteByZone[z.code] || [
+        { code: `PORTE-${z.code.replace("TRIB-", "")}`, nom: z.name, libelle: z.name.replace(/^Tribune\s+/i, "") },
+      ];
+      const porte = porteList[i % porteList.length];
       const tribune = { code: z.code, nom: z.name, couleur: z.color };
+      const secteur = code;
       let n = 0;
       for (let row = 0; row < 4; row++) {
         for (let col = 0; col < 8; col++) {
@@ -116,15 +125,15 @@ function buildMap(eventId) {
           const deg = secStart + t * span;
           const r = z.inner + 80 + row * ((z.outer - z.inner - 120) / 3);
           const [x, y] = polar(r, deg);
-          const seatId = `${secId}${String(n).padStart(2, "0")}`;
+          const placeId = Number(`${secId}${String(n).padStart(2, "0")}`);
           const rangee = rowLetters[row];
           const numero = col + 1;
           const place = `${rangee}${numero}`;
-          const seat_code = `${code}-${rangee}${numero}`;
-          const route = [`Enter ${porte.nom}`, `Section ${code}`, `Row ${rangee}`, `Seat ${place}`];
+          const seat_code = place;
+          const route = [porte.nom, secteur, rangee, place];
           seats.push({
-            id: seatId,
-            seat_id: seatId,
+            id: String(placeId),
+            seat_id: String(placeId),
             section_id: secId,
             zone_id: z.id,
             seat_code,
@@ -137,15 +146,16 @@ function buildMap(eventId) {
             status: "available",
             is_accessible: false,
             display_color: z.color,
-            place_id: seatId,
+            place_id: placeId,
             place,
             numero_place: numero,
             rangee,
-            secteur: null,
+            secteur,
             porte,
             tribune,
             route,
             route_texte: route.join(" → "),
+            code_litige: `STD-${eventId}-S${placeId}`,
           });
         }
       }
@@ -441,7 +451,7 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
         ...(h.numero_place != null ? { seat_number: String(h.numero_place) } : {}),
         // Core PublicPurchaseTicketDto.place — places-restantes (no qr_code here).
         place: {
-          place_id: Number(h.seat_id) || h.seat_id,
+          place_id: Number(h.place_id ?? h.seat_id) || h.seat_id,
           place: h.place || h.seat_code,
           numero_place: h.numero_place != null ? Number(h.numero_place) : 0,
           rangee: h.rangee || "",
@@ -454,7 +464,7 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
           route_texte:
             h.route_texte ||
             [h.porte?.nom, h.section_code, h.rangee, h.place || h.seat_code].filter(Boolean).join(" → "),
-          code_litige: `STD-${h.event_id}-S${h.seat_id}`,
+          code_litige: `STD-${h.event_id}-S${h.place_id ?? h.seat_id}`,
         },
         qr: {
           payload: code,

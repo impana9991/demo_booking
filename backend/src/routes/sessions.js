@@ -134,16 +134,21 @@ router.get("/:sessionId", async (req, res, next) => {
   }
 });
 
-/** Guide step 4: POST { seat_id } only */
+/** Guide step 4: POST { seat_id, section_id? } — place_id from map.seats is the hold key. */
 router.post("/:sessionId/holds", async (req, res, next) => {
   try {
-    const { seat_id } = req.body || {};
+    const { seat_id, section_id } = req.body || {};
     if (!seat_id) return res.status(400).json({ error: "seat_id is required" });
 
     const data = await stadepassRequest({
       method: "POST",
       path: `/api/v1/public/booking-sessions/${req.params.sessionId}/holds`,
-      body: { seat_id: String(seat_id) },
+      body: {
+        seat_id: String(seat_id),
+        ...(section_id != null && String(section_id) !== ""
+          ? { section_id: String(section_id) }
+          : {}),
+      },
     });
     res.status(201).json({ demo: isDemoMode(), ...data });
   } catch (e) {

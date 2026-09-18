@@ -151,11 +151,16 @@ export default function StadiumVenue({
     return seats
       .filter((s) => String(s.section_id) === String(activeSectionId))
       .map((s) => {
-        const geoId = String(s.seat_id || s.id);
+        const geoId = String(s.place_id ?? s.seat_id ?? s.id);
         let liveId = geoId;
         let live = seatStatusById?.[geoId];
-        if (!live && s.seat_code) {
-          const match = liveEntries.find(([, v]) => v.seat_code && String(v.seat_code) === String(s.seat_code));
+        if (!live && (s.place || s.seat_code)) {
+          const label = s.place || s.seat_code;
+          const match = liveEntries.find(
+            ([, v]) =>
+              (v.place && String(v.place) === String(label)) ||
+              (v.seat_code && String(v.seat_code) === String(label))
+          );
           if (match) {
             liveId = match[0];
             live = match[1];
@@ -167,9 +172,11 @@ export default function StadiumVenue({
           ...s,
           id: liveId,
           seat_id: liveId,
+          place_id: s.place_id ?? live?.place_id ?? liveId,
           status,
           price: live?.price ?? s.price,
-          seat_code: live?.seat_code || s.seat_code,
+          seat_code: live?.seat_code || s.seat_code || s.place,
+          place: live?.place || s.place,
         };
       });
   }, [seats, activeSectionId, seatStatusById]);
