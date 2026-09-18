@@ -148,6 +148,54 @@ function saveLocalOrder(order) {
   return next;
 }
 
+/**
+ * Core ticket QR shape:
+ *   qr: { payload, image_data_url: "data:image/png;base64,…" }
+ * Prefer image_data_url for <img src>.
+ */
+function ticketQrSrc(t) {
+  if (!t || typeof t !== "object") return null;
+  const dataUrl = t.qr?.image_data_url || t.qr?.imageDataUrl;
+  if (typeof dataUrl === "string" && dataUrl.trim()) return dataUrl;
+  // Legacy / alternate fields
+  const img = t.qr_image || t.image_data_url;
+  if (typeof img === "string" && img.trim()) {
+    if (img.startsWith("data:") || img.startsWith("http")) return img;
+    if (img.length > 48) return `data:image/png;base64,${img}`;
+  }
+  return null;
+}
+
+function ticketPayload(t) {
+  return t?.qr?.payload || t?.ticket_code || t?.qr_code || null;
+}
+
+function TicketCard({ ticket: t }) {
+  const qrSrc = ticketQrSrc(t);
+  const code = ticketPayload(t);
+  return (
+    <li className="ticket-card">
+      <div className="ticket-card-main">
+        <strong>{t.ticket_number || t.id || "Ticket"}</strong>
+        <span>
+          Seat {t.seat_code || t.seat_id || "—"}
+          {t.status ? ` · ${t.status}` : ""}
+        </span>
+        {code && <span className="ticket-code">{code}</span>}
+      </div>
+      {qrSrc ? (
+        <div className="ticket-qr">
+          <img src={qrSrc} alt="Ticket QR" width={140} height={140} />
+        </div>
+      ) : (
+        <div className="ticket-qr missing">
+          <span>QR pending (Core deploy)</span>
+        </div>
+      )}
+    </li>
+  );
+}
+
 export default function App() {
   const [view, setView] = useState(VIEWS.events);
   const [loading, setLoading] = useState(false);
@@ -686,28 +734,23 @@ export default function App() {
           email: "fan@example.com",
         },
       });
-      const tickets =
+      const ticketsRaw =
         res.purchase?.tickets ||
         res.purchase?.data?.tickets ||
         res.tickets ||
-        (res.checkout?.items || []).map((item, idx) => ({
-          id: item.hold_id || item.seat_id || String(idx),
+        [];
+      // Keep full Core ticket objects including qr: { payload, image_data_url }.
+      const tickets = (ticketsRaw.length ? ticketsRaw : selected).map((t, idx) => {
+        if (t && (t.ticket_number || t.id || t.qr || t.ticket_code)) return { ...t };
+        const s = selected[idx] || t || {};
+        return {
+          id: s.hold_id || s.seat_id || String(idx),
           ticket_number: `DB-${String(idx + 1).padStart(3, "0")}`,
-          seat_code: item.seat_code,
-          seat_id: item.seat_id,
+          seat_code: s.seat_code,
+          seat_id: s.seat_id,
           status: "CONFIRMED",
-        }));
-      if (!tickets.length) {
-        for (const [idx, s] of selected.entries()) {
-          tickets.push({
-            id: s.hold_id || s.seat_id || String(idx),
-            ticket_number: `DB-${String(idx + 1).padStart(3, "0")}`,
-            seat_code: s.seat_code,
-            seat_id: s.seat_id,
-            status: "CONFIRMED",
-          });
-        }
-      }
+        };
+      });
       const orderId = res.purchase?.order_id || res.payment?.reference || `ord-${Date.now()}`;
       const resultPayload = {
         ...res,
@@ -1277,13 +1320,7 @@ export default function App() {
                 </li>
               ) : (
                 (result.purchase?.tickets || []).map((t) => (
-                  <li key={t.id || t.ticket_number || t.seat_id}>
-                    <strong>{t.ticket_number || t.id || "Ticket"}</strong>
-                    <span>
-                      Seat {t.seat_code || t.seat_id || "—"}
-                      {t.status ? ` · ${t.status}` : ""}
-                    </span>
-                  </li>
+                  <TicketCard key={t.id || t.ticket_number || t.seat_id} ticket={t} />
                 ))
               )}
             </ul>
@@ -1330,13 +1367,7 @@ export default function App() {
                     {o.warning && <p className="pb-muted small">{o.warning}</p>}
                     <ul className="ticket-cards">
                       {(o.tickets || []).map((t) => (
-                        <li key={t.id || t.ticket_number || t.seat_id}>
-                          <strong>{t.ticket_number || t.id || "Ticket"}</strong>
-                          <span>
-                            Seat {t.seat_code || t.seat_id || "—"}
-                            {t.status ? ` · ${t.status}` : ""}
-                          </span>
-                        </li>
+                        <TicketCard key={t.id || t.ticket_number || t.seat_id} ticket={t} />
                       ))}
                     </ul>
                   </article>
