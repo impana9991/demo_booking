@@ -61,4 +61,5 @@ export const api = {
       body: JSON.stringify({ payment_status: "yes", ...body }),
     }),
   listTickets: () => request("/api/tickets"),
+  getTicket: (id) => request(`/api/tickets/${encodeURIComponent(id)}`),
 };

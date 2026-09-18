@@ -389,14 +389,23 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
       if (!h || h.status !== "held") continue;
       h.status = "sold";
       demoState.soldSeats.add(h.seat_id);
+      const code = `GN28-DEMO${String(tickets.length + 1).padStart(4, "0")}`;
+      // Demo stands in for Core's ready-to-display QR (Live: real PNG data-URL).
+      const tinyPng =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
       tickets.push({
         id: String(900 + tickets.length + 1),
         hold_id: hid,
         event_id: h.event_id,
         seat_id: h.seat_id,
-        ticket_number: `TCK-${String(tickets.length + 1).padStart(3, "0")}`,
+        ticket_code: code,
+        ticket_number: `TK-2026-${String(tickets.length + 1).padStart(3, "0")}-GN`,
         status: "SOLD",
         seat_code: h.seat_code,
+        qr: {
+          payload: code,
+          image_data_url: tinyPng,
+        },
       });
     }
     if (!tickets.length) bad(400, "No valid holds to purchase");
@@ -411,6 +420,11 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
         tickets,
       },
     };
+  }
+
+  const ticketMatch = path.match(/^\/api\/v1\/public\/tickets\/([^/]+)$/);
+  if (m === "GET" && ticketMatch) {
+    bad(404, `Ticket ${ticketMatch[1]} not found`);
   }
 
   bad(404, `Demo handler missing for ${m} ${path}`);
