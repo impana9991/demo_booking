@@ -1104,6 +1104,11 @@ select {
   color: var(--ink-soft);
 }
 
+.ticket-place-line {
+  font-size: 0.92rem;
+  color: var(--ink);
+}
+
 .ticket-qr {
   flex: 0 0 auto;
   padding: 0.4rem;
