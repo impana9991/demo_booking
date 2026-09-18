@@ -297,16 +297,24 @@ export default function StadiumVenue({
                   if (!canTap) return;
                   onToggleSeat?.({
                     seat_id: id,
-                    seat_code: seat.seat_code,
+                    place_id: seat.place_id || id,
+                    seat_code: seat.seat_code || seat.place,
+                    place: seat.place,
                     price: seat.price,
                     section_id: String(seat.section_id),
                     zone_id: String(seat.zone_id),
                     status: seat.status,
+                    porte: seat.porte || null,
+                    tribune: seat.tribune || null,
+                    rangee: seat.rangee,
+                    numero_place: seat.numero_place,
                   });
                 }}
               >
                 <title>
-                  {seat.seat_code} · {formatGnf(seat.price)} · {mine ? "yours" : seat.status}
+                  {[seat.place || seat.seat_code, seat.porte?.nom, formatGnf(seat.price), mine ? "yours" : seat.status]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </title>
               </circle>
             );

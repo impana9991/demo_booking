@@ -1099,6 +1099,11 @@ select {
   word-break: break-all;
 }
 
+.ticket-meta {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
 .ticket-qr {
   flex: 0 0 auto;
   padding: 0.4rem;
