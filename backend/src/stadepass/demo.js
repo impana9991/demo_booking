@@ -434,9 +434,6 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
       h.status = "sold";
       demoState.soldSeats.add(h.seat_id);
       const code = `GN28-DEMO${String(tickets.length + 1).padStart(4, "0")}`;
-      // Demo stand-in for Core qr.image_url (Live: Cloudinary HTTPS).
-      const tinyPng =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
       tickets.push({
         id: String(900 + tickets.length + 1),
         hold_id: hid,
@@ -449,7 +446,7 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
         ...(h.section_code ? { section_code: h.section_code } : {}),
         ...(h.rangee ? { row: h.rangee } : {}),
         ...(h.numero_place != null ? { seat_number: String(h.numero_place) } : {}),
-        // Core PublicPurchaseTicketDto.place — places-restantes (no qr_code here).
+        // Core: place{} only — no qr / image_url on Public purchase or tickets.
         place: {
           place_id: Number(h.place_id ?? h.seat_id) || h.seat_id,
           place: h.place || h.seat_code,
@@ -465,10 +462,6 @@ export async function demoRequest({ method, path, query = {}, body = null }) {
             h.route_texte ||
             [h.porte?.nom, h.section_code, h.rangee, h.place || h.seat_code].filter(Boolean).join(" → "),
           code_litige: `STD-${h.event_id}-S${h.place_id ?? h.seat_id}`,
-        },
-        qr: {
-          payload: code,
-          image_url: tinyPng,
         },
       });
     }

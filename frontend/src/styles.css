@@ -1073,10 +1073,14 @@ select {
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.85rem;
   box-shadow: var(--shadow);
+}
+
+.ticket-card--place {
+  align-items: stretch;
 }
 
 .ticket-card-main {

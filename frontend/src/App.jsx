@@ -161,31 +161,9 @@ function saveLocalOrder(order) {
 }
 
 /**
- * Core ticket QR (ticketing_back_app):
- *   qr: { payload, image_url }  // Cloudinary HTTPS — optional display
- * Place detail is under ticket.place (no qr_code inside place).
+ * Core Public API (latest): tickets expose place{} only — no qr / image_url.
+ * Partners display porte / rangée / siège / route from ticket.place.
  */
-function ticketQrSrc(t) {
-  if (!t || typeof t !== "object") return null;
-  const nested =
-    t.qr?.image_url ||
-    t.qr?.image_data_url ||
-    t.qr?.imageDataUrl ||
-    t.qr?.imageUrl;
-  if (typeof nested === "string" && nested.trim()) return nested;
-  const img = t.qr_image || t.image_data_url || t.image_url;
-  if (typeof img === "string" && img.trim()) {
-    if (img.startsWith("data:") || img.startsWith("http")) return img;
-    if (img.length > 48) return `data:image/png;base64,${img}`;
-  }
-  return null;
-}
-
-function ticketPayload(t) {
-  return t?.qr?.payload || t?.ticket_code || t?.qr_code || null;
-}
-
-/** Prefer Core ticket.place (places-restantes); fall back to flat fields. */
 function ticketPlace(t) {
   if (!t || typeof t !== "object") return null;
   if (t.place && typeof t.place === "object" && !Array.isArray(t.place)) return t.place;
@@ -193,8 +171,6 @@ function ticketPlace(t) {
 }
 
 function TicketCard({ ticket: t }) {
-  const qrSrc = ticketQrSrc(t);
-  const code = ticketPayload(t);
   const place = ticketPlace(t);
   const porteNom = place?.porte?.nom || place?.porte?.libelle || null;
   const tribuneNom = place?.tribune?.nom || null;
@@ -203,8 +179,9 @@ function TicketCard({ ticket: t }) {
   const numero = place?.numero_place ?? t.seat_number ?? null;
   const secteur = place?.secteur || t.section_code || null;
   const routeTexte = place?.route_texte || t.route_texte || null;
+  const placeId = place?.place_id ?? t.place_id ?? t.seat_id ?? null;
   return (
-    <li className="ticket-card">
+    <li className="ticket-card ticket-card--place">
       <div className="ticket-card-main">
         <strong>{t.ticket_number || t.id || "Ticket"}</strong>
         {(porteNom || tribuneNom) && (
@@ -224,17 +201,8 @@ function TicketCard({ ticket: t }) {
         </span>
         {routeTexte && <span className="ticket-meta">{routeTexte}</span>}
         {place?.code_litige && <span className="ticket-meta">{place.code_litige}</span>}
-        {code && <span className="ticket-code">{code}</span>}
+        {placeId != null && <span className="ticket-meta">place_id {placeId}</span>}
       </div>
-      {qrSrc ? (
-        <div className="ticket-qr">
-          <img src={qrSrc} alt="Ticket QR" width={140} height={140} />
-        </div>
-      ) : (
-        <div className="ticket-qr missing">
-          <span>QR pending (Core deploy)</span>
-        </div>
-      )}
     </li>
   );
 }
@@ -806,9 +774,9 @@ export default function App() {
         res.purchase?.data?.tickets ||
         res.tickets ||
         [];
-      // Keep full Core ticket objects including qr: { payload, image_url }.
+      // Keep full Core ticket objects including place{} (no qr on Public API).
       const tickets = (ticketsRaw.length ? ticketsRaw : selected).map((t, idx) => {
-        if (t && (t.ticket_number || t.id || t.qr || t.ticket_code)) return { ...t };
+        if (t && (t.ticket_number || t.id || t.place || t.ticket_code)) return { ...t };
         const s = selected[idx] || t || {};
         return {
           id: s.hold_id || s.seat_id || String(idx),
@@ -816,6 +784,7 @@ export default function App() {
           seat_code: s.seat_code || s.place,
           seat_id: s.seat_id || s.place_id,
           status: "CONFIRMED",
+          place: s.place && typeof s.place === "object" ? s.place : undefined,
         };
       });
       const orderId = res.purchase?.order_id || res.payment?.reference || `ord-${Date.now()}`;
